@@ -176,11 +176,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+j":
 			// Scroll detail viewport down
-			m.detailViewport.LineDown(1)
+			m.detailViewport.YOffset++
 			return m, nil
 		case "ctrl+k":
 			// Scroll detail viewport up
-			m.detailViewport.LineUp(1)
+			if m.detailViewport.YOffset > 0 {
+				m.detailViewport.YOffset--
+			}
 			return m, nil
 		case "up":
 			m.moveBy(-1)
@@ -203,9 +205,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveBy(-result.Count)
 		case "go_top":
 			m.selectedIdx = 0
+			m.detailViewport.YOffset = 0
 		case "go_bottom":
 			if len(m.messages) > 0 {
 				m.selectedIdx = len(m.messages) - 1
+				m.detailViewport.YOffset = 0
 			}
 		case "center_line":
 			// Centering is handled in renderMessageList
@@ -262,6 +266,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		// Update viewport dimensions
+		contentHeight := m.height - 5 // header(3) + status(1) + help(1)
+		if contentHeight < 3 {
+			contentHeight = 3
+		}
+		listWidth := int(float64(m.width) * m.splitRatio)
+		if listWidth < 20 {
+			listWidth = 20
+		}
+		detailWidth := m.width - listWidth - 1
+		if detailWidth < 20 {
+			detailWidth = 20
+		}
+
+		// Resize detail viewport (account for border and padding)
+		m.detailViewport.Width = detailWidth - 4
+		m.detailViewport.Height = contentHeight - 2
 
 	case connectedMsg:
 		m.connState = stateConnected
@@ -332,6 +354,12 @@ func (m *model) moveBy(delta int) {
 	if newIdx < 0 {
 		newIdx = 0
 	}
+
+	// Reset detail scroll when selection changes
+	if newIdx != m.selectedIdx {
+		m.detailViewport.YOffset = 0
+	}
+
 	m.selectedIdx = newIdx
 
 	// Auto-pause on select if configured
@@ -375,6 +403,7 @@ func (m *model) performSearch() {
 	// Jump to first result
 	if len(m.searchResults) > 0 {
 		m.selectedIdx = m.searchResults[0]
+		m.detailViewport.YOffset = 0
 	}
 }
 
@@ -384,6 +413,7 @@ func (m *model) nextSearchResult() {
 	}
 	m.searchResultIdx = (m.searchResultIdx + 1) % len(m.searchResults)
 	m.selectedIdx = m.searchResults[m.searchResultIdx]
+	m.detailViewport.YOffset = 0
 }
 
 func (m *model) prevSearchResult() {
@@ -395,6 +425,7 @@ func (m *model) prevSearchResult() {
 		m.searchResultIdx = len(m.searchResults) - 1
 	}
 	m.selectedIdx = m.searchResults[m.searchResultIdx]
+	m.detailViewport.YOffset = 0
 }
 
 func (m *model) toggleBookmark() {
@@ -418,6 +449,7 @@ func (m *model) nextBookmark() {
 	for i := m.selectedIdx + 1; i < len(m.messages); i++ {
 		if m.bookmarks[m.messages[i].ID] {
 			m.selectedIdx = i
+			m.detailViewport.YOffset = 0
 			return
 		}
 	}
@@ -425,6 +457,7 @@ func (m *model) nextBookmark() {
 	for i := 0; i <= m.selectedIdx; i++ {
 		if m.bookmarks[m.messages[i].ID] {
 			m.selectedIdx = i
+			m.detailViewport.YOffset = 0
 			return
 		}
 	}
@@ -436,15 +469,31 @@ func (m *model) yankMessage() {
 	}
 
 	msg := m.messages[m.selectedIdx]
-	var content string
-	if msg.Decoded != nil {
-		bodyJSON, _ := json.MarshalIndent(msg.Decoded, "", "  ")
-		content = string(bodyJSON)
-	} else {
-		content = string(msg.RawBody)
+
+	type yankMessage struct {
+		RoutingKey string         `json:"routing_key"`
+		Exchange   string         `json:"exchange"`
+		Timestamp  time.Time      `json:"timestamp"`
+		Headers    map[string]any `json:"headers,omitempty"`
+		Body       any            `json:"body"`
 	}
 
-	if err := clipboard.WriteAll(content); err != nil {
+	yank := yankMessage{
+		RoutingKey: msg.RoutingKey,
+		Exchange:   msg.Exchange,
+		Timestamp:  msg.Timestamp,
+		Headers:    msg.Headers,
+	}
+
+	if msg.Decoded != nil {
+		yank.Body = msg.Decoded
+	} else {
+		yank.Body = base64.StdEncoding.EncodeToString(msg.RawBody)
+	}
+
+	content, _ := json.MarshalIndent(yank, "", "  ")
+
+	if err := clipboard.WriteAll(string(content)); err != nil {
 		m.setStatusMsg("Copy failed: " + err.Error())
 	} else {
 		m.setStatusMsg("Copied to clipboard")
@@ -676,6 +725,12 @@ func (m model) renderMessageList(width, height int) string {
 }
 
 func (m model) renderDetailPanel(width, height int) string {
+	// Account for border (2 lines)
+	innerHeight := height - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
 	if len(m.messages) == 0 || m.selectedIdx >= len(m.messages) {
 		return detailPanelStyle.Width(width).Height(height).Render(
 			mutedStyle.Render("Select a message to view details"),
@@ -726,7 +781,35 @@ func (m model) renderDetailPanel(width, height int) string {
 		lines = append(lines, formatHex(msg.RawBody))
 	}
 
-	content := strings.Join(lines, "\n")
+	// Split into individual lines for scrolling
+	allLines := strings.Split(strings.Join(lines, "\n"), "\n")
+
+	// Apply scroll offset from viewport
+	scrollOffset := m.detailViewport.YOffset
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	if scrollOffset > len(allLines)-innerHeight {
+		scrollOffset = len(allLines) - innerHeight
+		if scrollOffset < 0 {
+			scrollOffset = 0
+		}
+	}
+
+	// Get visible lines
+	endIdx := scrollOffset + innerHeight
+	if endIdx > len(allLines) {
+		endIdx = len(allLines)
+	}
+
+	visibleLines := allLines[scrollOffset:endIdx]
+
+	// Pad to fill height if content is shorter
+	for len(visibleLines) < innerHeight {
+		visibleLines = append(visibleLines, "")
+	}
+
+	content := strings.Join(visibleLines, "\n")
 	return detailPanelStyle.Width(width).Height(height).Render(content)
 }
 

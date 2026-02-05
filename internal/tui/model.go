@@ -1,10 +1,17 @@
 package tui
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,6 +37,36 @@ type model struct {
 	showRaw       bool
 	paused        bool
 	msgChan       <-chan Message
+
+	// Vim command state
+	vimKeys VimKeyState
+
+	// Search
+	searchMode      bool
+	searchQuery     string
+	searchInput     textinput.Model
+	searchResults   []int
+	searchResultIdx int
+
+	// Bookmarks
+	bookmarks map[int]bool
+
+	// UI state
+	splitRatio   float64
+	compactMode  bool
+	showHelp     bool
+	timestampRel bool
+
+	// New messages indicator (when paused)
+	newMsgCount int
+
+	// Components
+	spinner        spinner.Model
+	detailViewport viewport.Model
+
+	// Status messages (brief confirmations)
+	statusMsg     string
+	statusMsgTime time.Time
 }
 
 // Tea messages
@@ -45,14 +82,35 @@ type connectionErrorMsg struct {
 	err error
 }
 
-type tickMsg time.Time
+type clearStatusMsg struct{}
 
 func initialModel(cfg Config) model {
+	si := textinput.New()
+	si.Placeholder = "Search..."
+	si.CharLimit = 100
+	si.Width = 30
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = spinnerStyle
+
+	splitRatio := cfg.DefaultSplitRatio
+	if splitRatio == 0 {
+		splitRatio = 0.5
+	}
+
 	return model{
-		config:    cfg,
-		messages:  make([]Message, 0, 1000),
-		connState: stateDisconnected,
-		viewport:  viewport.New(80, 20),
+		config:         cfg,
+		messages:       make([]Message, 0, 1000),
+		connState:      stateConnecting,
+		viewport:       viewport.New(80, 20),
+		detailViewport: viewport.New(80, 20),
+		vimKeys:        NewVimKeyState(),
+		bookmarks:      make(map[int]bool),
+		splitRatio:     splitRatio,
+		compactMode:    cfg.CompactMode,
+		searchInput:    si,
+		spinner:        sp,
 	}
 }
 
@@ -60,6 +118,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.EnterAltScreen,
 		m.connectCmd(),
+		m.spinner.Tick,
 	)
 }
 
@@ -68,38 +127,141 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle search mode input
+		if m.searchMode {
+			switch msg.String() {
+			case "esc":
+				m.searchMode = false
+				m.searchQuery = ""
+				m.searchResults = nil
+				m.searchInput.Blur()
+				return m, nil
+			case "enter":
+				m.searchMode = false
+				m.searchQuery = m.searchInput.Value()
+				m.searchInput.Blur()
+				m.performSearch()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// Handle help overlay
+		if m.showHelp {
+			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
+				m.showHelp = false
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Handle special keys that bypass vim handler
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			return m, tea.Quit
-		case "up", "k":
-			if m.selectedIdx > 0 {
-				m.selectedIdx--
-			}
-		case "down", "j":
-			if m.selectedIdx < len(m.messages)-1 {
-				m.selectedIdx++
-			}
-		case "g":
+		case "ctrl+u":
+			m.moveBy(-m.visibleItems() / 2)
+			return m, nil
+		case "ctrl+d":
+			m.moveBy(m.visibleItems() / 2)
+			return m, nil
+		case "ctrl+f":
+			m.moveBy(m.visibleItems())
+			return m, nil
+		case "ctrl+b":
+			m.moveBy(-m.visibleItems())
+			return m, nil
+		case "ctrl+j":
+			// Scroll detail viewport down
+			m.detailViewport.LineDown(1)
+			return m, nil
+		case "ctrl+k":
+			// Scroll detail viewport up
+			m.detailViewport.LineUp(1)
+			return m, nil
+		case "up":
+			m.moveBy(-1)
+			return m, nil
+		case "down":
+			m.moveBy(1)
+			return m, nil
+		}
+
+		// Process through vim key handler
+		result := m.vimKeys.ProcessKey(msg.String())
+		if result.Action == "pending" {
+			return m, nil
+		}
+
+		switch result.Action {
+		case "move_down":
+			m.moveBy(result.Count)
+		case "move_up":
+			m.moveBy(-result.Count)
+		case "go_top":
 			m.selectedIdx = 0
-		case "G":
+		case "go_bottom":
 			if len(m.messages) > 0 {
 				m.selectedIdx = len(m.messages) - 1
 			}
-		case "r":
+		case "center_line":
+			// Centering is handled in renderMessageList
+		case "search_start":
+			m.searchMode = true
+			m.searchInput.SetValue("")
+			m.searchInput.Focus()
+			return m, textinput.Blink
+		case "search_next":
+			m.nextSearchResult()
+		case "search_prev":
+			m.prevSearchResult()
+		case "yank":
+			m.yankMessage()
+		case "export":
+			m.exportMessages()
+		case "bookmark_toggle":
+			m.toggleBookmark()
+		case "bookmark_next":
+			m.nextBookmark()
+		case "toggle_compact":
+			m.compactMode = !m.compactMode
+		case "toggle_timestamp":
+			m.timestampRel = !m.timestampRel
+		case "toggle_raw":
 			m.showRaw = !m.showRaw
-		case "p", " ":
+		case "toggle_help":
+			m.showHelp = !m.showHelp
+		case "resize_left":
+			if m.splitRatio > 0.2 {
+				m.splitRatio -= 0.05
+			}
+		case "resize_right":
+			if m.splitRatio < 0.8 {
+				m.splitRatio += 0.05
+			}
+		case "pause_toggle":
 			m.paused = !m.paused
-		case "c":
+			if !m.paused {
+				m.newMsgCount = 0
+			}
+		case "clear":
 			m.messages = m.messages[:0]
 			m.selectedIdx = 0
 			m.messageCount = 0
+			m.bookmarks = make(map[int]bool)
+			m.newMsgCount = 0
+		case "back":
+			// Handled by parent app model
+		case "quit":
+			return m, tea.Quit
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.viewport.Width = msg.Width/2 - 4
-		m.viewport.Height = msg.Height - 8
 
 	case connectedMsg:
 		m.connState = stateConnected
@@ -110,13 +272,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connState = stateDisconnected
 		m.connError = msg.err
 
+	case retryMsg:
+		m.connState = stateConnecting
+		m.connError = nil
+		cmds = append(cmds, m.connectWithRetry(msg.attempt))
+
 	case msgReceived:
-		if !m.paused {
+		if m.paused {
+			m.newMsgCount++
+		} else {
 			m.messageCount++
 			msg.msg.ID = m.messageCount
 			m.messages = append(m.messages, msg.msg)
 			// Keep max 1000 messages
 			if len(m.messages) > 1000 {
+				// Update bookmarks when removing old messages
+				newBookmarks := make(map[int]bool)
+				for id := range m.bookmarks {
+					if id > 1 {
+						newBookmarks[id-1] = true
+					}
+				}
+				m.bookmarks = newBookmarks
 				m.messages = m.messages[1:]
 				if m.selectedIdx > 0 {
 					m.selectedIdx--
@@ -128,47 +305,242 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		cmds = append(cmds, m.waitForMessage())
+
+	case spinner.TickMsg:
+		// Only tick spinner when connecting
+		if m.connState == stateConnecting {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+
+	case clearStatusMsg:
+		m.statusMsg = ""
 	}
 
 	return m, tea.Batch(cmds...)
 }
 
+func (m *model) moveBy(delta int) {
+	newIdx := m.selectedIdx + delta
+	if newIdx < 0 {
+		newIdx = 0
+	}
+	if newIdx >= len(m.messages) {
+		newIdx = len(m.messages) - 1
+	}
+	if newIdx < 0 {
+		newIdx = 0
+	}
+	m.selectedIdx = newIdx
+
+	// Auto-pause on select if configured
+	if m.config.AutoPauseOnSelect && delta != 0 {
+		m.paused = true
+	}
+}
+
+func (m model) visibleItems() int {
+	// Account for borders (2) in message list
+	items := m.height - 6
+	if items < 1 {
+		return 1
+	}
+	return items
+}
+
+func (m *model) performSearch() {
+	m.searchResults = nil
+	m.searchResultIdx = 0
+	if m.searchQuery == "" {
+		return
+	}
+
+	query := strings.ToLower(m.searchQuery)
+	for i, msg := range m.messages {
+		// Search in routing key
+		if strings.Contains(strings.ToLower(msg.RoutingKey), query) {
+			m.searchResults = append(m.searchResults, i)
+			continue
+		}
+		// Search in decoded body
+		if msg.Decoded != nil {
+			bodyJSON, _ := json.Marshal(msg.Decoded)
+			if strings.Contains(strings.ToLower(string(bodyJSON)), query) {
+				m.searchResults = append(m.searchResults, i)
+			}
+		}
+	}
+
+	// Jump to first result
+	if len(m.searchResults) > 0 {
+		m.selectedIdx = m.searchResults[0]
+	}
+}
+
+func (m *model) nextSearchResult() {
+	if len(m.searchResults) == 0 {
+		return
+	}
+	m.searchResultIdx = (m.searchResultIdx + 1) % len(m.searchResults)
+	m.selectedIdx = m.searchResults[m.searchResultIdx]
+}
+
+func (m *model) prevSearchResult() {
+	if len(m.searchResults) == 0 {
+		return
+	}
+	m.searchResultIdx--
+	if m.searchResultIdx < 0 {
+		m.searchResultIdx = len(m.searchResults) - 1
+	}
+	m.selectedIdx = m.searchResults[m.searchResultIdx]
+}
+
+func (m *model) toggleBookmark() {
+	if len(m.messages) == 0 {
+		return
+	}
+	msgID := m.messages[m.selectedIdx].ID
+	if m.bookmarks[msgID] {
+		delete(m.bookmarks, msgID)
+	} else {
+		m.bookmarks[msgID] = true
+	}
+}
+
+func (m *model) nextBookmark() {
+	if len(m.bookmarks) == 0 {
+		return
+	}
+
+	// Find next bookmarked message after current position
+	for i := m.selectedIdx + 1; i < len(m.messages); i++ {
+		if m.bookmarks[m.messages[i].ID] {
+			m.selectedIdx = i
+			return
+		}
+	}
+	// Wrap around
+	for i := 0; i <= m.selectedIdx; i++ {
+		if m.bookmarks[m.messages[i].ID] {
+			m.selectedIdx = i
+			return
+		}
+	}
+}
+
+func (m *model) yankMessage() {
+	if len(m.messages) == 0 || m.selectedIdx >= len(m.messages) {
+		return
+	}
+
+	msg := m.messages[m.selectedIdx]
+	var content string
+	if msg.Decoded != nil {
+		bodyJSON, _ := json.MarshalIndent(msg.Decoded, "", "  ")
+		content = string(bodyJSON)
+	} else {
+		content = string(msg.RawBody)
+	}
+
+	if err := clipboard.WriteAll(content); err != nil {
+		m.setStatusMsg("Copy failed: " + err.Error())
+	} else {
+		m.setStatusMsg("Copied to clipboard")
+	}
+}
+
+func (m *model) exportMessages() {
+	if len(m.messages) == 0 {
+		m.setStatusMsg("No messages to export")
+		return
+	}
+
+	type exportMessage struct {
+		ID         int            `json:"id"`
+		RoutingKey string         `json:"routing_key"`
+		Exchange   string         `json:"exchange"`
+		Timestamp  time.Time      `json:"timestamp"`
+		Headers    map[string]any `json:"headers,omitempty"`
+		Body       any            `json:"body,omitempty"`
+		RawBody    string         `json:"raw_body"`
+	}
+
+	exports := make([]exportMessage, len(m.messages))
+	for i, msg := range m.messages {
+		exports[i] = exportMessage{
+			ID:         msg.ID,
+			RoutingKey: msg.RoutingKey,
+			Exchange:   msg.Exchange,
+			Timestamp:  msg.Timestamp,
+			Headers:    msg.Headers,
+			Body:       msg.Decoded,
+			RawBody:    base64.StdEncoding.EncodeToString(msg.RawBody),
+		}
+	}
+
+	filename := fmt.Sprintf("rabbithole-export-%s.json", time.Now().Format("20060102-150405"))
+	data, _ := json.MarshalIndent(exports, "", "  ")
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		m.setStatusMsg("Export failed: " + err.Error())
+	} else {
+		m.setStatusMsg(fmt.Sprintf("Exported to %s", filename))
+	}
+}
+
+func (m *model) setStatusMsg(msg string) {
+	m.statusMsg = msg
+	m.statusMsgTime = time.Now()
+}
+
 func (m model) View() string {
 	if m.width == 0 {
-		return "Loading..."
+		return m.spinner.View() + " Loading..."
+	}
+
+	// Help overlay
+	if m.showHelp {
+		return m.renderHelpOverlay()
+	}
+
+	// Calculate content height: total - header(3) - status(1) - help(1)
+	contentHeight := m.height - 5
+	if contentHeight < 3 {
+		contentHeight = 3
+	}
+
+	// Calculate widths
+	listWidth := int(float64(m.width) * m.splitRatio)
+	if listWidth < 20 {
+		listWidth = 20
+	}
+	detailWidth := m.width - listWidth - 1
+	if detailWidth < 20 {
+		detailWidth = 20
 	}
 
 	// Header
-	header := headerStyle.Width(m.width - 2).Render(
-		"🐰 rabbithole - RabbitMQ Message Inspector",
-	)
+	header := headerStyle.Width(m.width - 2).Render("rabbithole")
 
 	// Status bar
 	status := m.renderStatusBar()
 
-	// Main content: message list + detail panel
-	listWidth := m.width/2 - 2
-	detailWidth := m.width - listWidth - 4
+	// Main content
+	messageList := m.renderMessageList(listWidth, contentHeight)
+	detailPanel := m.renderDetailPanel(detailWidth, contentHeight)
 
-	messageList := m.renderMessageList(listWidth, m.height-8)
-	detailPanel := m.renderDetailPanel(detailWidth, m.height-8)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, messageList, detailPanel)
 
-	content := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		messageList,
-		detailPanel,
-	)
+	// Help bar or search bar
+	var bottomBar string
+	if m.searchMode {
+		bottomBar = m.renderSearchBar()
+	} else {
+		bottomBar = m.renderHelpBar()
+	}
 
-	// Help bar
-	help := m.renderHelpBar()
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
-		status,
-		content,
-		help,
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, header, status, content, bottomBar)
 }
 
 func (m model) renderStatusBar() string {
@@ -177,7 +549,7 @@ func (m model) renderStatusBar() string {
 	case stateConnected:
 		connStatus = connectedStyle.Render("● Connected")
 	case stateConnecting:
-		connStatus = statusBarStyle.Render("◌ Connecting...")
+		connStatus = statusBarStyle.Render(m.spinner.View() + " Connecting...")
 	default:
 		errMsg := ""
 		if m.connError != nil {
@@ -189,72 +561,117 @@ func (m model) renderStatusBar() string {
 	exchange := statusBarStyle.Render(fmt.Sprintf("Exchange: %s", m.config.Exchange))
 	routingKey := statusBarStyle.Render(fmt.Sprintf("Routing: %s", m.config.RoutingKey))
 	msgCount := statusBarStyle.Render(fmt.Sprintf("Messages: %d", len(m.messages)))
-	protoCount := statusBarStyle.Render(fmt.Sprintf("Proto: %d types", protoTypesLoaded))
 
 	pausedStatus := ""
 	if m.paused {
 		pausedStatus = disconnectedStyle.Render(" [PAUSED]")
+		if m.newMsgCount > 0 {
+			pausedStatus += " " + newMsgStyle.Render(fmt.Sprintf("+%d new", m.newMsgCount))
+		}
+	}
+
+	// Search results indicator
+	searchStatus := ""
+	if m.searchQuery != "" {
+		if len(m.searchResults) > 0 {
+			searchStatus = statusBarStyle.Render(fmt.Sprintf(" [%d/%d]", m.searchResultIdx+1, len(m.searchResults)))
+		} else {
+			searchStatus = mutedStyle.Render(" (no matches)")
+		}
+	}
+
+	// Status message (brief confirmation)
+	statusMsgDisplay := ""
+	if m.statusMsg != "" && time.Since(m.statusMsgTime) < 3*time.Second {
+		statusMsgDisplay = "  " + confirmationStyle.Render(m.statusMsg)
 	}
 
 	return lipgloss.JoinHorizontal(
 		lipgloss.Left,
 		connStatus,
 		pausedStatus,
+		searchStatus,
+		statusMsgDisplay,
 		"  │  ",
 		exchange,
 		"  │  ",
 		routingKey,
 		"  │  ",
 		msgCount,
-		"  │  ",
-		protoCount,
 	)
 }
 
 func (m model) renderMessageList(width, height int) string {
-	visibleItems := height - 2
-	if visibleItems < 1 {
-		visibleItems = 1
+	// Account for border (2 lines)
+	innerHeight := height - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	// Empty state
+	if len(m.messages) == 0 {
+		emptyContent := strings.Join([]string{
+			"",
+			emptyStateStyle.Render("No messages yet"),
+			"",
+			mutedStyle.Render(fmt.Sprintf("Watching: %s", m.config.Exchange)),
+			mutedStyle.Render(fmt.Sprintf("Routing: %s", m.config.RoutingKey)),
+			"",
+			mutedStyle.Render("Press ? for help"),
+		}, "\n")
+		return messageListStyle.Width(width).Height(height).Render(emptyContent)
 	}
 
 	startIdx := 0
-	if m.selectedIdx >= visibleItems {
-		startIdx = m.selectedIdx - visibleItems + 1
+	if m.selectedIdx >= innerHeight {
+		startIdx = m.selectedIdx - innerHeight + 1
 	}
 
-	endIdx := startIdx + visibleItems
+	endIdx := startIdx + innerHeight
 	if endIdx > len(m.messages) {
 		endIdx = len(m.messages)
 	}
 
-	// Pre-allocate with exact capacity for consistent rendering
-	items := make([]string, 0, visibleItems)
+	items := make([]string, 0, innerHeight)
+	innerWidth := width - 4 // Account for border and padding
 
 	for i := startIdx; i < endIdx; i++ {
 		msg := m.messages[i]
-		ts := timestampStyle.Render(msg.Timestamp.Format("15:04:05"))
-		rk := routingKeyStyle.Render(truncate(msg.RoutingKey, width-20))
-		line := fmt.Sprintf("%s %s", ts, rk)
+
+		// Bookmark indicator
+		prefix := "  "
+		if m.bookmarks[msg.ID] {
+			prefix = "* "
+		}
+		if i == m.selectedIdx {
+			prefix = "> "
+		}
+
+		var line string
+		if m.compactMode {
+			rk := truncate(msg.RoutingKey, innerWidth-3)
+			line = prefix + rk
+		} else {
+			var ts string
+			if m.timestampRel {
+				ts = formatRelativeTime(msg.Timestamp)
+			} else {
+				ts = msg.Timestamp.Format("15:04:05")
+			}
+			rk := truncate(msg.RoutingKey, innerWidth-12)
+			line = fmt.Sprintf("%s%s %s", prefix, ts, rk)
+		}
 
 		if i == m.selectedIdx {
-			line = selectedMessageStyle.Width(width - 4).Render("▶ " + line)
-		} else {
-			line = normalMessageStyle.Width(width - 4).Render("  " + line)
+			line = selectedMessageStyle.Render(line)
+		} else if m.bookmarks[msg.ID] {
+			line = bookmarkStyle.Render(line)
 		}
+
 		items = append(items, line)
 	}
 
-	// Pad with empty lines to maintain fixed height
-	emptyLine := normalMessageStyle.Width(width - 4).Render("")
-	for len(items) < visibleItems {
-		items = append(items, emptyLine)
-	}
-
 	content := strings.Join(items, "\n")
-	if len(m.messages) == 0 {
-		content = mutedStyle.Render("  Waiting for messages...")
-	}
-
 	return messageListStyle.Width(width).Height(height).Render(content)
 }
 
@@ -266,78 +683,185 @@ func (m model) renderDetailPanel(width, height int) string {
 	}
 
 	msg := m.messages[m.selectedIdx]
-	var content strings.Builder
+	innerWidth := width - 4
+	var lines []string
 
-	// Header info
-	content.WriteString(fieldNameStyle.Render("Routing Key: "))
-	content.WriteString(fieldValueStyle.Render(msg.RoutingKey))
-	content.WriteString("\n")
+	// METADATA section
+	lines = append(lines, fieldNameStyle.Render("METADATA"))
+	lines = append(lines, dividerStyle.Render(strings.Repeat("─", innerWidth)))
+	lines = append(lines, fieldNameStyle.Render("Routing Key: ")+msg.RoutingKey)
+	lines = append(lines, fieldNameStyle.Render("Exchange: ")+msg.Exchange)
+	lines = append(lines, fieldNameStyle.Render("Timestamp: ")+msg.Timestamp.Format(time.RFC3339))
+	lines = append(lines, fieldNameStyle.Render("Size: ")+fmt.Sprintf("%d bytes", len(msg.RawBody)))
+	lines = append(lines, "")
 
-	content.WriteString(fieldNameStyle.Render("Exchange: "))
-	content.WriteString(fieldValueStyle.Render(msg.Exchange))
-	content.WriteString("\n")
-
-	content.WriteString(fieldNameStyle.Render("Timestamp: "))
-	content.WriteString(fieldValueStyle.Render(msg.Timestamp.Format(time.RFC3339)))
-	content.WriteString("\n")
-
-	content.WriteString(fieldNameStyle.Render("Size: "))
-	content.WriteString(fieldValueStyle.Render(fmt.Sprintf("%d bytes", len(msg.RawBody))))
-	content.WriteString("\n\n")
-
-	// Headers
+	// HEADERS section
 	if len(msg.Headers) > 0 {
-		content.WriteString(fieldNameStyle.Render("Headers:\n"))
-		for k, v := range msg.Headers {
-			content.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+		lines = append(lines, fieldNameStyle.Render("HEADERS"))
+		lines = append(lines, dividerStyle.Render(strings.Repeat("─", innerWidth)))
+		// Sort header keys for stable output
+		headerKeys := make([]string, 0, len(msg.Headers))
+		for k := range msg.Headers {
+			headerKeys = append(headerKeys, k)
 		}
-		content.WriteString("\n")
+		sort.Strings(headerKeys)
+		for _, k := range headerKeys {
+			lines = append(lines, fmt.Sprintf("%s: %v", fieldNameStyle.Render(k), msg.Headers[k]))
+		}
+		lines = append(lines, "")
 	}
 
-	// Body
-	content.WriteString(fieldNameStyle.Render("Body:\n"))
+	// BODY section
+	lines = append(lines, fieldNameStyle.Render("BODY"))
+	lines = append(lines, dividerStyle.Render(strings.Repeat("─", innerWidth)))
+
 	if m.showRaw {
-		content.WriteString(fieldValueStyle.Render(formatHex(msg.RawBody, width-4)))
+		lines = append(lines, formatHex(msg.RawBody))
 	} else if msg.DecodeErr != nil {
-		content.WriteString(errorStyle.Render(fmt.Sprintf("Decode error: %v\n", msg.DecodeErr)))
-		content.WriteString(fieldValueStyle.Render(formatHex(msg.RawBody, width-4)))
+		lines = append(lines, errorStyle.Render(fmt.Sprintf("Decode error: %v", msg.DecodeErr)))
+		lines = append(lines, formatHex(msg.RawBody))
 	} else if msg.Decoded != nil {
-		content.WriteString(fieldValueStyle.Render(formatJSON(msg.Decoded, width-4)))
+		lines = append(lines, formatJSONSyntax(msg.Decoded))
 	} else {
-		content.WriteString(fieldValueStyle.Render(formatHex(msg.RawBody, width-4)))
+		lines = append(lines, formatHex(msg.RawBody))
 	}
 
-	return detailPanelStyle.Width(width).Height(height).Render(content.String())
+	content := strings.Join(lines, "\n")
+	return detailPanelStyle.Width(width).Height(height).Render(content)
+}
+
+func (m model) renderSearchBar() string {
+	return helpStyle.Render("Search: ") + m.searchInput.View() + helpStyle.Render("  (Enter to search, Esc to cancel)")
 }
 
 func (m model) renderHelpBar() string {
 	keys := []struct{ key, desc string }{
-		{"↑/k", "up"},
-		{"↓/j", "down"},
-		{"g/G", "top/bottom"},
-		{"r", "raw/decoded"},
-		{"p/space", "pause"},
-		{"c", "clear"},
-		{"b", "browser"},
+		{"j/k", "nav"},
+		{"gg/G", "top/end"},
+		{"/", "search"},
+		{"y", "copy"},
+		{"m", "mark"},
+		{"r", "raw"},
+		{"p", "pause"},
+		{"?", "help"},
+		{"b", "back"},
 		{"q", "quit"},
 	}
 
 	var parts []string
 	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s %s", helpKeyStyle.Render(k.key), k.desc))
+		parts = append(parts, helpKeyStyle.Render(k.key)+" "+k.desc)
 	}
 
-	return helpStyle.Render(strings.Join(parts, "  │  "))
+	return helpStyle.Render(strings.Join(parts, " │ "))
+}
+
+func (m model) renderHelpOverlay() string {
+	var lines []string
+
+	lines = append(lines, fieldNameStyle.Render("Keybindings"))
+	lines = append(lines, "")
+
+	sections := []struct {
+		name string
+		keys []struct{ key, desc string }
+	}{
+		{
+			name: "Navigation",
+			keys: []struct{ key, desc string }{
+				{"j / k", "Move down / up"},
+				{"5j / 10k", "Move 5 down / 10 up"},
+				{"gg", "Go to top"},
+				{"G", "Go to bottom"},
+				{"Ctrl+U / Ctrl+D", "Half page up / down"},
+				{"Ctrl+F / Ctrl+B", "Full page up / down"},
+			},
+		},
+		{
+			name: "Search",
+			keys: []struct{ key, desc string }{
+				{"/", "Start search"},
+				{"n / N", "Next / previous result"},
+				{"Esc", "Clear search"},
+			},
+		},
+		{
+			name: "Actions",
+			keys: []struct{ key, desc string }{
+				{"y", "Copy message to clipboard"},
+				{"e", "Export all messages to JSON"},
+				{"m", "Toggle bookmark"},
+				{"'", "Jump to next bookmark"},
+				{"c", "Clear all messages"},
+			},
+		},
+		{
+			name: "View",
+			keys: []struct{ key, desc string }{
+				{"r", "Toggle raw/decoded view"},
+				{"t", "Toggle compact mode"},
+				{"T", "Toggle timestamp format"},
+				{"H / L", "Resize panes left / right"},
+				{"?", "Toggle this help"},
+			},
+		},
+		{
+			name: "Control",
+			keys: []struct{ key, desc string }{
+				{"p / Space", "Pause / resume"},
+				{"b", "Back to browser"},
+				{"q / Ctrl+C", "Quit"},
+			},
+		},
+	}
+
+	for _, section := range sections {
+		lines = append(lines, helpCategoryStyle.Render(section.name))
+		for _, k := range section.keys {
+			lines = append(lines, fmt.Sprintf("  %-18s %s", helpKeyStyle.Render(k.key), k.desc))
+		}
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, mutedStyle.Render("Press ? or Esc to close"))
+
+	content := strings.Join(lines, "\n")
+
+	overlayWidth := 50
+	overlayHeight := len(lines) + 4
+	if overlayHeight > m.height-4 {
+		overlayHeight = m.height - 4
+	}
+
+	overlay := helpOverlayStyle.Width(overlayWidth).Render(content)
+
+	// Center the overlay
+	hPad := (m.width - overlayWidth) / 2
+	vPad := (m.height - overlayHeight) / 2
+	if hPad < 0 {
+		hPad = 0
+	}
+	if vPad < 0 {
+		vPad = 0
+	}
+
+	return lipgloss.NewStyle().
+		PaddingLeft(hPad).
+		PaddingTop(vPad).
+		Render(overlay)
 }
 
 func truncate(s string, max int) string {
+	if max <= 3 {
+		return s
+	}
 	if len(s) <= max {
 		return s
 	}
 	return s[:max-3] + "..."
 }
 
-func formatHex(data []byte, width int) string {
+func formatHex(data []byte) string {
 	var sb strings.Builder
 	for i, b := range data {
 		if i > 0 && i%16 == 0 {
@@ -352,27 +876,49 @@ func formatHex(data []byte, width int) string {
 	return sb.String()
 }
 
-func formatJSON(data map[string]any, width int) string {
+func formatRelativeTime(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Second {
+		return "now"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// formatJSONSyntax formats JSON with syntax highlighting
+func formatJSONSyntax(data map[string]any) string {
 	var sb strings.Builder
-	formatValue(&sb, data, 0, width)
+	formatValueSyntax(&sb, data, 0)
 	return sb.String()
 }
 
-func formatValue(sb *strings.Builder, v any, indent int, width int) {
+func formatValueSyntax(sb *strings.Builder, v any, indent int) {
 	indentStr := strings.Repeat("  ", indent)
 
 	switch val := v.(type) {
 	case map[string]any:
 		sb.WriteString("{\n")
-		i := 0
-		for k, v := range val {
+		// Sort keys for stable output
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for i, k := range keys {
 			sb.WriteString(indentStr)
 			sb.WriteString("  ")
-			sb.WriteString(fieldNameStyle.Render(k))
+			sb.WriteString(jsonKeyStyle.Render(fmt.Sprintf("%q", k)))
 			sb.WriteString(": ")
-			formatValue(sb, v, indent+1, width)
-			i++
-			if i < len(val) {
+			formatValueSyntax(sb, val[k], indent+1)
+			if i < len(keys)-1 {
 				sb.WriteString(",")
 			}
 			sb.WriteString("\n")
@@ -384,7 +930,7 @@ func formatValue(sb *strings.Builder, v any, indent int, width int) {
 		for i, item := range val {
 			sb.WriteString(indentStr)
 			sb.WriteString("  ")
-			formatValue(sb, item, indent+1, width)
+			formatValueSyntax(sb, item, indent+1)
 			if i < len(val)-1 {
 				sb.WriteString(",")
 			}
@@ -393,7 +939,15 @@ func formatValue(sb *strings.Builder, v any, indent int, width int) {
 		sb.WriteString(indentStr)
 		sb.WriteString("]")
 	case string:
-		sb.WriteString(fmt.Sprintf("%q", val))
+		sb.WriteString(jsonStringStyle.Render(fmt.Sprintf("%q", val)))
+	case float64:
+		sb.WriteString(jsonNumberStyle.Render(fmt.Sprintf("%v", val)))
+	case int:
+		sb.WriteString(jsonNumberStyle.Render(fmt.Sprintf("%d", val)))
+	case bool:
+		sb.WriteString(jsonBoolStyle.Render(fmt.Sprintf("%v", val)))
+	case nil:
+		sb.WriteString(jsonNullStyle.Render("null"))
 	default:
 		sb.WriteString(fmt.Sprintf("%v", val))
 	}

@@ -18,13 +18,17 @@ type appModel struct {
 	browser  browserModel
 	consumer model
 	decoder  *proto.Decoder
+
+	// Track queues created across views for deletion
+	createdQueues map[string]bool
 }
 
 func newAppModel(cfg Config) appModel {
 	return appModel{
-		config:  cfg,
-		view:    appViewBrowser,
-		browser: newBrowserModel(cfg),
+		config:        cfg,
+		view:          appViewBrowser,
+		browser:       newBrowserModel(cfg),
+		createdQueues: make(map[string]bool),
 	}
 }
 
@@ -35,6 +39,15 @@ func (m appModel) Init() tea.Cmd {
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case startConsumingMsg:
+		// Track newly created queue
+		if msg.queue != "" {
+			m.createdQueues[msg.queue] = true
+		}
+		// Copy created queues to browser for tracking
+		for q := range m.createdQueues {
+			m.browser.createdQueues[q] = true
+		}
+
 		// Switch to consumer view
 		m.view = appViewConsumer
 		consumerCfg := m.config
@@ -51,6 +64,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global escape to go back to browser from consumer
 		if m.view == appViewConsumer && msg.String() == "b" {
 			m.view = appViewBrowser
+			// Sync created queues back to browser
+			for q := range m.createdQueues {
+				m.browser.createdQueues[q] = true
+			}
 			return m, m.browser.loadTopology()
 		}
 	}
@@ -59,6 +76,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appViewBrowser:
 		newBrowser, cmd := m.browser.Update(msg)
 		m.browser = newBrowser.(browserModel)
+		// Sync created queues from browser
+		for q := range m.browser.createdQueues {
+			m.createdQueues[q] = true
+		}
 		return m, cmd
 
 	case appViewConsumer:

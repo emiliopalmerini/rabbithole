@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/epalmerini/rabbithole/internal/proto"
@@ -12,6 +13,13 @@ import (
 var decoder *proto.Decoder
 
 var protoTypesLoaded int
+
+// Connection retry settings
+const (
+	maxRetries     = 5
+	maxBackoff     = 30 * time.Second
+	initialBackoff = 1 * time.Second
+)
 
 func Run(cfg Config) error {
 	// Initialize proto decoder if path provided
@@ -43,7 +51,17 @@ func Run(cfg Config) error {
 	return nil
 }
 
+// retryMsg is sent when a retry attempt should be made
+type retryMsg struct {
+	attempt int
+	delay   time.Duration
+}
+
 func (m model) connectCmd() tea.Cmd {
+	return m.connectWithRetry(0)
+}
+
+func (m model) connectWithRetry(attempt int) tea.Cmd {
 	return func() tea.Msg {
 		consumer, err := rabbitmq.NewConsumer(rabbitmq.Config{
 			URL:        m.config.RabbitMQURL,
@@ -53,7 +71,16 @@ func (m model) connectCmd() tea.Cmd {
 			Durable:    m.config.Durable,
 		})
 		if err != nil {
-			return connectionErrorMsg{err: err}
+			// Check if we should retry
+			if attempt < maxRetries {
+				// Calculate backoff with exponential increase
+				delay := initialBackoff * time.Duration(1<<attempt)
+				if delay > maxBackoff {
+					delay = maxBackoff
+				}
+				return retryMsg{attempt: attempt + 1, delay: delay}
+			}
+			return connectionErrorMsg{err: fmt.Errorf("failed after %d attempts: %w", maxRetries, err)}
 		}
 
 		msgChan := make(chan Message, 100)
@@ -108,4 +135,11 @@ func (m model) waitForMessage() tea.Cmd {
 		}
 		return msgReceived{msg: msg}
 	}
+}
+
+// scheduleRetry returns a command that waits and then triggers a retry
+func scheduleRetry(attempt int, delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(_ time.Time) tea.Msg {
+		return retryMsg{attempt: attempt, delay: delay}
+	})
 }

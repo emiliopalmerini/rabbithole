@@ -44,6 +44,29 @@ func (q *Queries) EndSession(ctx context.Context, id int64) error {
 	return err
 }
 
+const getLastSessionByExchange = `-- name: GetLastSessionByExchange :one
+SELECT id, started_at, ended_at, exchange, routing_key, queue_name, amqp_url
+FROM sessions
+WHERE exchange = ? AND ended_at IS NOT NULL
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastSessionByExchange(ctx context.Context, exchange string) (Session, error) {
+	row := q.db.QueryRowContext(ctx, getLastSessionByExchange, exchange)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Exchange,
+		&i.RoutingKey,
+		&i.QueueName,
+		&i.AmqpUrl,
+	)
+	return i, err
+}
+
 const getMessage = `-- name: GetMessage :one
 SELECT id, session_id, exchange, routing_key, body, content_type,
        headers, timestamp, consumed_at, proto_type, correlation_id,
@@ -136,6 +159,60 @@ type ListMessagesBySessionParams struct {
 
 func (q *Queries) ListMessagesBySession(ctx context.Context, arg ListMessagesBySessionParams) ([]Message, error) {
 	rows, err := q.db.QueryContext(ctx, listMessagesBySession, arg.SessionID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Exchange,
+			&i.RoutingKey,
+			&i.Body,
+			&i.ContentType,
+			&i.Headers,
+			&i.Timestamp,
+			&i.ConsumedAt,
+			&i.ProtoType,
+			&i.CorrelationID,
+			&i.ReplyTo,
+			&i.MessageID,
+			&i.AppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMessagesBySessionAsc = `-- name: ListMessagesBySessionAsc :many
+SELECT id, session_id, exchange, routing_key, body, content_type,
+       headers, timestamp, consumed_at, proto_type, correlation_id,
+       reply_to, message_id, app_id
+FROM messages
+WHERE session_id = ?
+ORDER BY consumed_at ASC
+LIMIT ? OFFSET ?
+`
+
+type ListMessagesBySessionAscParams struct {
+	SessionID int64 `json:"session_id"`
+	Limit     int64 `json:"limit"`
+	Offset    int64 `json:"offset"`
+}
+
+func (q *Queries) ListMessagesBySessionAsc(ctx context.Context, arg ListMessagesBySessionAscParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, listMessagesBySessionAsc, arg.SessionID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

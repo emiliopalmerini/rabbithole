@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -109,9 +110,30 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			return connectionErrorMsg{err: fmt.Errorf("failed after %d attempts: %w", maxRetries, err)}
 		}
 
-		// Create session for persistence
+		// Load historical messages and create session for persistence
+		var historicalMsgs []Message
 		if store != nil {
 			ctx := context.Background()
+
+			// Close any existing writer and session before creating new ones
+			if asyncWriter != nil {
+				asyncWriter.Close()
+				asyncWriter = nil
+			}
+			if sessionID > 0 {
+				store.EndSession(ctx, sessionID)
+				sessionID = 0
+			}
+
+			// Load messages from last session on this exchange
+			lastSession, err := store.GetLastSessionByExchange(ctx, m.config.Exchange)
+			if err == nil && lastSession != nil {
+				dbMsgs, err := store.ListMessagesBySessionAsc(ctx, lastSession.ID, 1000, 0)
+				if err == nil {
+					historicalMsgs = convertDBMessages(dbMsgs)
+				}
+			}
+
 			queueName := m.config.QueueName
 			if queueName == "" {
 				queueName = "(auto-generated)"
@@ -183,7 +205,11 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			}
 		}()
 
-		return connectedMsg{msgChan: msgChan}
+		return connectedMsg{
+			msgChan:         msgChan,
+			historicalMsgs:  historicalMsgs,
+			historicalCount: len(historicalMsgs),
+		}
 	}
 }
 
@@ -205,4 +231,55 @@ func scheduleRetry(attempt int, delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(_ time.Time) tea.Msg {
 		return retryMsg{attempt: attempt, delay: delay}
 	})
+}
+
+// convertDBMessages converts database messages to TUI messages
+func convertDBMessages(dbMsgs []db.Message) []Message {
+	msgs := make([]Message, len(dbMsgs))
+	for i, dbMsg := range dbMsgs {
+		msg := Message{
+			ID:         i + 1,
+			Exchange:   dbMsg.Exchange,
+			RoutingKey: dbMsg.RoutingKey,
+			RawBody:    dbMsg.Body,
+			Historical: true,
+		}
+		if dbMsg.Timestamp.Valid {
+			msg.Timestamp = dbMsg.Timestamp.Time
+		}
+		if dbMsg.ContentType.Valid {
+			msg.ContentType = dbMsg.ContentType.String
+		}
+		if dbMsg.ProtoType.Valid {
+			msg.ProtoType = dbMsg.ProtoType.String
+		}
+		if dbMsg.CorrelationID.Valid {
+			msg.CorrelationID = dbMsg.CorrelationID.String
+		}
+		if dbMsg.ReplyTo.Valid {
+			msg.ReplyTo = dbMsg.ReplyTo.String
+		}
+		if dbMsg.MessageID.Valid {
+			msg.MessageID = dbMsg.MessageID.String
+		}
+		if dbMsg.AppID.Valid {
+			msg.AppID = dbMsg.AppID.String
+		}
+		if dbMsg.Headers.Valid {
+			var headers map[string]any
+			if err := json.Unmarshal([]byte(dbMsg.Headers.String), &headers); err == nil {
+				msg.Headers = headers
+			}
+		}
+		// Try to decode protobuf if decoder is available
+		if decoder != nil {
+			decoded, protoType, err := decoder.DecodeWithHintAndType(dbMsg.Body, dbMsg.RoutingKey)
+			if err == nil {
+				msg.Decoded = decoded
+				msg.ProtoType = protoType
+			}
+		}
+		msgs[i] = msg
+	}
+	return msgs
 }

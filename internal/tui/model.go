@@ -75,7 +75,9 @@ type msgReceived struct {
 }
 
 type connectedMsg struct {
-	msgChan <-chan Message
+	msgChan          <-chan Message
+	historicalMsgs   []Message
+	historicalCount  int
 }
 
 type connectionErrorMsg struct {
@@ -288,6 +290,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connectedMsg:
 		m.connState = stateConnected
 		m.msgChan = msg.msgChan
+		// Load historical messages first
+		if len(msg.historicalMsgs) > 0 {
+			m.messages = msg.historicalMsgs
+			m.messageCount = msg.historicalCount
+		}
 		cmds = append(cmds, m.waitForMessage())
 
 	case connectionErrorMsg:
@@ -609,7 +616,22 @@ func (m model) renderStatusBar() string {
 
 	exchange := statusBarStyle.Render(fmt.Sprintf("Exchange: %s", m.config.Exchange))
 	routingKey := statusBarStyle.Render(fmt.Sprintf("Routing: %s", m.config.RoutingKey))
-	msgCount := statusBarStyle.Render(fmt.Sprintf("Messages: %d", len(m.messages)))
+
+	// Count historical vs live messages
+	historicalCount := 0
+	for _, msg := range m.messages {
+		if msg.Historical {
+			historicalCount++
+		}
+	}
+	liveCount := len(m.messages) - historicalCount
+
+	var msgCount string
+	if historicalCount > 0 {
+		msgCount = statusBarStyle.Render(fmt.Sprintf("Messages: %dH+%dL", historicalCount, liveCount))
+	} else {
+		msgCount = statusBarStyle.Render(fmt.Sprintf("Messages: %d", len(m.messages)))
+	}
 
 	pausedStatus := ""
 	if m.paused {
@@ -687,13 +709,19 @@ func (m model) renderMessageList(width, height int) string {
 	for i := startIdx; i < endIdx; i++ {
 		msg := m.messages[i]
 
+		// Source indicator: H=historical (from DB), L=live (from queue)
+		sourceIndicator := "L"
+		if msg.Historical {
+			sourceIndicator = "H"
+		}
+
 		// Bookmark indicator
-		prefix := "  "
+		prefix := sourceIndicator + " "
 		if m.bookmarks[msg.ID] {
-			prefix = "* "
+			prefix = sourceIndicator + "*"
 		}
 		if i == m.selectedIdx {
-			prefix = "> "
+			prefix = sourceIndicator + ">"
 		}
 
 		var line string
@@ -715,6 +743,8 @@ func (m model) renderMessageList(width, height int) string {
 			line = selectedMessageStyle.Render(line)
 		} else if m.bookmarks[msg.ID] {
 			line = bookmarkStyle.Render(line)
+		} else if msg.Historical {
+			line = mutedStyle.Render(line)
 		}
 
 		items = append(items, line)

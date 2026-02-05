@@ -18,4 +18,5 @@ type Message struct {
 	MessageID     string
 	AppID         string
 	ProtoType     string
+	Historical    bool // true if loaded from database (previous session)
 }

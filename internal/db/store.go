@@ -18,9 +18,11 @@ type Store interface {
 	CreateSession(ctx context.Context, exchange, routingKey, queueName, amqpURL string) (int64, error)
 	EndSession(ctx context.Context, sessionID int64) error
 	ListRecentSessions(ctx context.Context, limit int64) ([]Session, error)
+	GetLastSessionByExchange(ctx context.Context, exchange string) (*Session, error)
 	InsertMessage(ctx context.Context, msg *MessageRecord) (int64, error)
 	GetMessage(ctx context.Context, id int64) (*Message, error)
 	ListMessagesBySession(ctx context.Context, sessionID, limit, offset int64) ([]Message, error)
+	ListMessagesBySessionAsc(ctx context.Context, sessionID, limit, offset int64) ([]Message, error)
 	SearchMessages(ctx context.Context, query string, limit, offset int64) ([]Message, error)
 	SearchMessagesInSession(ctx context.Context, query string, sessionID, limit, offset int64) ([]Message, error)
 	Close() error
@@ -228,6 +230,22 @@ func (s *SQLiteStore) ListMessagesBySession(ctx context.Context, sessionID, limi
 		Limit:     limit,
 		Offset:    offset,
 	})
+}
+
+func (s *SQLiteStore) ListMessagesBySessionAsc(ctx context.Context, sessionID, limit, offset int64) ([]Message, error) {
+	return s.queries.ListMessagesBySessionAsc(ctx, ListMessagesBySessionAscParams{
+		SessionID: sessionID,
+		Limit:     limit,
+		Offset:    offset,
+	})
+}
+
+func (s *SQLiteStore) GetLastSessionByExchange(ctx context.Context, exchange string) (*Session, error) {
+	session, err := s.queries.GetLastSessionByExchange(ctx, exchange)
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
 }
 
 func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit, offset int64) ([]Message, error) {

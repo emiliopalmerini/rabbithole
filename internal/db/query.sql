@@ -36,3 +36,19 @@ WHERE session_id = ?
 ORDER BY consumed_at DESC
 LIMIT ? OFFSET ?;
 
+-- name: GetLastSessionByExchange :one
+SELECT id, started_at, ended_at, exchange, routing_key, queue_name, amqp_url
+FROM sessions
+WHERE exchange = ? AND ended_at IS NOT NULL
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: ListMessagesBySessionAsc :many
+SELECT id, session_id, exchange, routing_key, body, content_type,
+       headers, timestamp, consumed_at, proto_type, correlation_id,
+       reply_to, message_id, app_id
+FROM messages
+WHERE session_id = ?
+ORDER BY consumed_at ASC
+LIMIT ? OFFSET ?;
+

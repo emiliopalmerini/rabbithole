@@ -13,6 +13,7 @@ A beautiful TUI for consuming and inspecting RabbitMQ messages with Protobuf dec
 - **Hex View** - Toggle between decoded and raw hex view
 - **Pause/Resume** - Freeze the stream to inspect messages
 - **Durable Queues** - Create persistent queues that survive broker restarts
+- **SQLite Persistence** - Optionally save messages to a local database for history and replay
 
 ## Installation
 
@@ -69,6 +70,27 @@ rabbithole -exchange events -proto ./proto/
 
 The decoder uses the routing key to guess the message type. For example, a message with routing key `editorial.it.country.updated` will preferentially match a `CountryUpdated` message type.
 
+### Message Persistence
+
+Enable SQLite persistence to save all consumed messages for later analysis:
+
+```bash
+# Enable persistence with default database location
+rabbithole -exchange events -persist
+
+# Use a custom database path
+rabbithole -exchange events -persist -db /path/to/messages.db
+```
+
+Messages are saved asynchronously via a buffered channel to avoid impacting consumption performance. The database is stored at `~/.local/share/rabbithole/rabbithole.db` by default.
+
+Each session records:
+- Session metadata (exchange, routing key, queue, timestamps)
+- Full message content (body, headers, AMQP properties)
+- Detected protobuf type (if proto decoding is enabled)
+
+The database includes FTS5 full-text search on message bodies and routing keys.
+
 ## CLI Flags
 
 | Flag | Default | Description |
@@ -78,6 +100,8 @@ The decoder uses the routing key to guess the message type. For example, a messa
 | `-routing-key` | `#` | Routing key pattern (`#` = all, `*` = single word) |
 | `-queue` | | Queue name (empty = auto-generated exclusive queue) |
 | `-proto` | | Path to directory containing `.proto` files |
+| `-persist` | `false` | Enable SQLite message persistence |
+| `-db` | `~/.local/share/rabbithole/rabbithole.db` | Custom database path |
 | `-version` | | Show version and exit |
 
 ## Keybindings

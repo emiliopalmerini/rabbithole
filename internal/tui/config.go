@@ -13,6 +13,10 @@ type Config struct {
 	AutoPauseOnSelect bool    // Pause when user navigates
 	DefaultSplitRatio float64 // Initial split ratio (0.5 = 50/50)
 	CompactMode       bool    // Show only routing key, no timestamp
+
+	// Persistence options
+	EnablePersistence bool   // Enable SQLite persistence
+	DBPath            string // Custom database path (empty = default)
 }
 
 // DefaultConfig returns a Config with sensible defaults

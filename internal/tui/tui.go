@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/epalmerini/rabbithole/internal/db"
 	"github.com/epalmerini/rabbithole/internal/proto"
 	"github.com/epalmerini/rabbithole/internal/rabbitmq"
 )
@@ -13,6 +14,13 @@ import (
 var decoder *proto.Decoder
 
 var protoTypesLoaded int
+
+// Persistence state (package-level for access from model methods)
+var (
+	store       db.Store
+	asyncWriter *db.AsyncWriter
+	sessionID   int64
+)
 
 // Connection retry settings
 const (
@@ -30,6 +38,24 @@ func Run(cfg Config) error {
 			return fmt.Errorf("failed to load proto files: %w", err)
 		}
 		protoTypesLoaded = len(decoder.ListTypes())
+	}
+
+	// Initialize persistence if enabled
+	if cfg.EnablePersistence {
+		var err error
+		store, err = db.NewStore(cfg.DBPath)
+		if err != nil {
+			return fmt.Errorf("failed to initialize database: %w", err)
+		}
+		defer func() {
+			if asyncWriter != nil {
+				asyncWriter.Close()
+			}
+			if sessionID > 0 {
+				store.EndSession(context.Background(), sessionID)
+			}
+			store.Close()
+		}()
 	}
 
 	var m tea.Model
@@ -83,6 +109,20 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			return connectionErrorMsg{err: fmt.Errorf("failed after %d attempts: %w", maxRetries, err)}
 		}
 
+		// Create session for persistence
+		if store != nil {
+			ctx := context.Background()
+			queueName := m.config.QueueName
+			if queueName == "" {
+				queueName = "(auto-generated)"
+			}
+			sid, err := store.CreateSession(ctx, m.config.Exchange, m.config.RoutingKey, queueName, m.config.RabbitMQURL)
+			if err == nil {
+				sessionID = sid
+				asyncWriter = db.NewAsyncWriter(store, sessionID)
+			}
+		}
+
 		msgChan := make(chan Message, 100)
 
 		go func() {
@@ -99,21 +139,44 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 				}
 
 				msg := Message{
-					RoutingKey: del.RoutingKey,
-					Exchange:   del.Exchange,
-					Timestamp:  del.Timestamp,
-					RawBody:    del.Body,
-					Headers:    headers,
+					RoutingKey:    del.RoutingKey,
+					Exchange:      del.Exchange,
+					Timestamp:     del.Timestamp,
+					RawBody:       del.Body,
+					Headers:       headers,
+					ContentType:   del.ContentType,
+					CorrelationID: del.CorrelationID,
+					ReplyTo:       del.ReplyTo,
+					MessageID:     del.MessageID,
+					AppID:         del.AppID,
 				}
 
 				// Try to decode protobuf with routing key hint
 				if decoder != nil {
-					decoded, err := decoder.DecodeWithHint(del.Body, del.RoutingKey)
+					decoded, protoType, err := decoder.DecodeWithHintAndType(del.Body, del.RoutingKey)
 					if err != nil {
 						msg.DecodeErr = err
 					} else {
 						msg.Decoded = decoded
+						msg.ProtoType = protoType
 					}
+				}
+
+				// Persist message if enabled
+				if asyncWriter != nil {
+					asyncWriter.Save(&db.MessageRecord{
+						Exchange:      del.Exchange,
+						RoutingKey:    del.RoutingKey,
+						Body:          del.Body,
+						ContentType:   del.ContentType,
+						Headers:       del.Headers,
+						Timestamp:     del.Timestamp,
+						ProtoType:     msg.ProtoType,
+						CorrelationID: del.CorrelationID,
+						ReplyTo:       del.ReplyTo,
+						MessageID:     del.MessageID,
+						AppID:         del.AppID,
+					})
 				}
 
 				msgChan <- msg

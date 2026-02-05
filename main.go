@@ -28,6 +28,8 @@ func parseFlags() tui.Config {
 	flag.StringVar(&cfg.QueueName, "queue", "", "Queue name (empty for exclusive auto-delete queue)")
 	flag.StringVar(&cfg.ProtoPath, "proto", "", "Path to directory containing .proto files")
 	flag.BoolVar(&cfg.ShowVersion, "version", false, "Show version")
+	flag.BoolVar(&cfg.EnablePersistence, "persist", false, "Enable SQLite message persistence")
+	flag.StringVar(&cfg.DBPath, "db", "", "Custom database path (default: ~/.local/share/rabbithole/rabbithole.db)")
 	flag.Parse()
 
 	if cfg.ShowVersion {

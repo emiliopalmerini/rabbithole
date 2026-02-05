@@ -92,8 +92,14 @@ func (d *Decoder) Decode(data []byte) (map[string]any, error) {
 
 // DecodeWithHint decodes using a routing key hint to pick the right message type
 func (d *Decoder) DecodeWithHint(data []byte, routingKey string) (map[string]any, error) {
+	result, _, err := d.DecodeWithHintAndType(data, routingKey)
+	return result, err
+}
+
+// DecodeWithHintAndType decodes and returns both the result and the detected type name
+func (d *Decoder) DecodeWithHintAndType(data []byte, routingKey string) (map[string]any, string, error) {
 	if d == nil || len(d.allMessages) == 0 {
-		return nil, fmt.Errorf("no message types loaded")
+		return nil, "", fmt.Errorf("no message types loaded")
 	}
 
 	// Extract hint from routing key (e.g., "editorial.it.country.updated" -> "CountryUpdated")
@@ -128,12 +134,12 @@ func (d *Decoder) DecodeWithHint(data []byte, routingKey string) (map[string]any
 	}
 
 	if bestMatch == nil {
-		return nil, fmt.Errorf("could not decode with any known message type")
+		return nil, "", fmt.Errorf("could not decode with any known message type")
 	}
 
 	result := messageToMap(bestMatch)
 	result["__type"] = bestMatchName
-	return result, nil
+	return result, bestMatchName, nil
 }
 
 // routingKeyToTypeHint converts routing key to expected message type

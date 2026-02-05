@@ -19,11 +19,16 @@ type Config struct {
 }
 
 type Delivery struct {
-	RoutingKey string
-	Exchange   string
-	Timestamp  time.Time
-	Body       []byte
-	Headers    map[string]any
+	RoutingKey    string
+	Exchange      string
+	Timestamp     time.Time
+	Body          []byte
+	Headers       map[string]any
+	ContentType   string
+	CorrelationID string
+	ReplyTo       string
+	MessageID     string
+	AppID         string
 }
 
 type Consumer struct {
@@ -151,11 +156,16 @@ func (c *Consumer) Consume(ctx context.Context) (<-chan Delivery, error) {
 				}
 
 				deliveries <- Delivery{
-					RoutingKey: msg.RoutingKey,
-					Exchange:   msg.Exchange,
-					Timestamp:  ts,
-					Body:       msg.Body,
-					Headers:    headers,
+					RoutingKey:    msg.RoutingKey,
+					Exchange:      msg.Exchange,
+					Timestamp:     ts,
+					Body:          msg.Body,
+					Headers:       headers,
+					ContentType:   msg.ContentType,
+					CorrelationID: msg.CorrelationId,
+					ReplyTo:       msg.ReplyTo,
+					MessageID:     msg.MessageId,
+					AppID:         msg.AppId,
 				}
 			}
 		}

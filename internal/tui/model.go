@@ -75,9 +75,9 @@ type msgReceived struct {
 }
 
 type connectedMsg struct {
-	msgChan          <-chan Message
-	historicalMsgs   []Message
-	historicalCount  int
+	msgChan         <-chan Message
+	historicalMsgs  []Message
+	historicalCount int
 }
 
 type connectionErrorMsg struct {
@@ -791,7 +791,7 @@ func (m model) renderDetailPanel(width, height int) string {
 		}
 		sort.Strings(headerKeys)
 		for _, k := range headerKeys {
-			lines = append(lines, fmt.Sprintf("%s: %v", fieldNameStyle.Render(k), msg.Headers[k]))
+			lines = append(lines, fmt.Sprintf("%s: %s", fieldNameStyle.Render(k), formatHeaderValue(msg.Headers[k])))
 		}
 		lines = append(lines, "")
 	}
@@ -1006,6 +1006,24 @@ func formatRelativeTime(t time.Time) string {
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
 
+// formatHeaderValue formats a header value as JSON for complex types, or as a simple string for primitives
+func formatHeaderValue(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprintf("%v", val)
+	case nil:
+		return "null"
+	default:
+		// For maps, slices, and other complex types, marshal as JSON
+		if jsonBytes, err := json.Marshal(val); err == nil {
+			return string(jsonBytes)
+		}
+		return fmt.Sprintf("%v", val)
+	}
+}
+
 // formatJSONSyntax formats JSON with syntax highlighting
 func formatJSONSyntax(data map[string]any) string {
 	var sb strings.Builder
@@ -1062,6 +1080,11 @@ func formatValueSyntax(sb *strings.Builder, v any, indent int) {
 	case nil:
 		sb.WriteString(jsonNullStyle.Render("null"))
 	default:
-		sb.WriteString(fmt.Sprintf("%v", val))
+		// For unknown types (including maps not matching map[string]any), marshal as JSON
+		if jsonBytes, err := json.Marshal(val); err == nil {
+			sb.WriteString(string(jsonBytes))
+		} else {
+			sb.WriteString(fmt.Sprintf("%v", val))
+		}
 	}
 }

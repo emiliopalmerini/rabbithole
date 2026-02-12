@@ -31,8 +31,8 @@ func (s *mockStore) count() int {
 func (s *mockStore) CreateSession(context.Context, string, string, string, string) (int64, error) {
 	return 0, nil
 }
-func (s *mockStore) EndSession(context.Context, int64) error                          { return nil }
-func (s *mockStore) ListRecentSessions(context.Context, int64) ([]Session, error)     { return nil, nil }
+func (s *mockStore) EndSession(context.Context, int64) error                      { return nil }
+func (s *mockStore) ListRecentSessions(context.Context, int64) ([]Session, error) { return nil, nil }
 func (s *mockStore) GetLastSessionByExchange(context.Context, string) (*Session, error) {
 	return nil, nil
 }

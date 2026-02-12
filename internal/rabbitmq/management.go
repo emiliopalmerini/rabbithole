@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -100,13 +101,13 @@ func (c *ManagementClient) doRequest(ctx context.Context, method, path string, b
 	return c.client.Do(req)
 }
 
-func (c *ManagementClient) GetExchanges(ctx context.Context, vhost string) ([]Exchange, error) {
+func (c *ManagementClient) GetExchanges(ctx context.Context, vhost string) (_ []Exchange, err error) {
 	path := fmt.Sprintf("/exchanges/%s", url.PathEscape(vhost))
 	resp, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
@@ -128,13 +129,13 @@ func (c *ManagementClient) GetExchanges(ctx context.Context, vhost string) ([]Ex
 	return filtered, nil
 }
 
-func (c *ManagementClient) GetQueues(ctx context.Context, vhost string) ([]Queue, error) {
+func (c *ManagementClient) GetQueues(ctx context.Context, vhost string) (_ []Queue, err error) {
 	path := fmt.Sprintf("/queues/%s", url.PathEscape(vhost))
 	resp, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
@@ -148,14 +149,14 @@ func (c *ManagementClient) GetQueues(ctx context.Context, vhost string) ([]Queue
 	return queues, nil
 }
 
-func (c *ManagementClient) GetBindings(ctx context.Context, vhost, exchange string) ([]Binding, error) {
+func (c *ManagementClient) GetBindings(ctx context.Context, vhost, exchange string) (_ []Binding, err error) {
 	path := fmt.Sprintf("/exchanges/%s/%s/bindings/source",
 		url.PathEscape(vhost), url.PathEscape(exchange))
 	resp, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
@@ -169,7 +170,7 @@ func (c *ManagementClient) GetBindings(ctx context.Context, vhost, exchange stri
 	return bindings, nil
 }
 
-func (c *ManagementClient) CreateQueue(ctx context.Context, vhost, name string, durable bool) error {
+func (c *ManagementClient) CreateQueue(ctx context.Context, vhost, name string, durable bool) (err error) {
 	path := fmt.Sprintf("/queues/%s/%s", url.PathEscape(vhost), url.PathEscape(name))
 	body := fmt.Sprintf(`{"durable":%t,"auto_delete":false}`, durable)
 
@@ -177,7 +178,7 @@ func (c *ManagementClient) CreateQueue(ctx context.Context, vhost, name string, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("failed to create queue: status %d", resp.StatusCode)
@@ -186,7 +187,7 @@ func (c *ManagementClient) CreateQueue(ctx context.Context, vhost, name string, 
 	return nil
 }
 
-func (c *ManagementClient) CreateBinding(ctx context.Context, vhost, exchange, queue, routingKey string) error {
+func (c *ManagementClient) CreateBinding(ctx context.Context, vhost, exchange, queue, routingKey string) (err error) {
 	path := fmt.Sprintf("/bindings/%s/e/%s/q/%s",
 		url.PathEscape(vhost), url.PathEscape(exchange), url.PathEscape(queue))
 	body := fmt.Sprintf(`{"routing_key":%q}`, routingKey)
@@ -195,7 +196,7 @@ func (c *ManagementClient) CreateBinding(ctx context.Context, vhost, exchange, q
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("failed to create binding: status %d", resp.StatusCode)
@@ -204,14 +205,14 @@ func (c *ManagementClient) CreateBinding(ctx context.Context, vhost, exchange, q
 	return nil
 }
 
-func (c *ManagementClient) DeleteQueue(ctx context.Context, vhost, name string) error {
+func (c *ManagementClient) DeleteQueue(ctx context.Context, vhost, name string) (err error) {
 	path := fmt.Sprintf("/queues/%s/%s", url.PathEscape(vhost), url.PathEscape(name))
 
 	resp, err := c.doRequest(ctx, "DELETE", path, nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to delete queue: status %d", resp.StatusCode)

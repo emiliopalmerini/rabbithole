@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -44,8 +45,7 @@ func NewConsumer(cfg Config) (*Consumer, error) {
 
 	ch, err := conn.Channel()
 	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open channel: %w", err)
+		return nil, errors.Join(fmt.Errorf("failed to open channel: %w", err), conn.Close())
 	}
 
 	return &Consumer{
@@ -174,12 +174,13 @@ func (c *Consumer) Consume(ctx context.Context) (<-chan Delivery, error) {
 }
 
 func (c *Consumer) Close() error {
+	var chanErr error
 	if c.channel != nil {
-		c.channel.Close()
+		chanErr = c.channel.Close()
 	}
 	if c.conn != nil {
-		return c.conn.Close()
+		return errors.Join(chanErr, c.conn.Close())
 	}
-	return nil
+	return chanErr
 }
 

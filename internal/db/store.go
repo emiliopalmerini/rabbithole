@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -71,14 +72,12 @@ func NewStore(customPath string) (*SQLiteStore, error) {
 
 	// Enable foreign keys and WAL mode for better performance
 	if _, err := db.Exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to set pragmas: %w", err)
+		return nil, errors.Join(fmt.Errorf("failed to set pragmas: %w", err), db.Close())
 	}
 
 	// Initialize schema
 	if err := initSchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
+		return nil, errors.Join(fmt.Errorf("failed to initialize schema: %w", err), db.Close())
 	}
 
 	return &SQLiteStore{
@@ -276,12 +275,12 @@ LIMIT ? OFFSET ?
 	return s.scanMessages(ctx, searchQuery, query, sessionID, limit, offset)
 }
 
-func (s *SQLiteStore) scanMessages(ctx context.Context, query string, args ...any) ([]Message, error) {
+func (s *SQLiteStore) scanMessages(ctx context.Context, query string, args ...any) (_ []Message, err error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	var messages []Message
 	for rows.Next() {

@@ -18,11 +18,6 @@ var (
 	jsonBoolColor   = lipgloss.Color("#F472B6") // Pink
 	jsonNullColor   = lipgloss.Color("#6B7280") // Grey italic
 
-	// Base styles
-	baseStyle = lipgloss.NewStyle().
-			Background(darkBgColor).
-			Foreground(offWhiteColor)
-
 	// Header
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -64,9 +59,6 @@ var (
 			Foreground(orangeColor).
 			Italic(true)
 
-	timestampStyle = lipgloss.NewStyle().
-			Foreground(greyColor)
-
 	// Detail panel
 	detailPanelStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
@@ -76,9 +68,6 @@ var (
 	fieldNameStyle = lipgloss.NewStyle().
 			Foreground(orangeColor).
 			Bold(true)
-
-	fieldValueStyle = lipgloss.NewStyle().
-			Foreground(offWhiteColor)
 
 	// Help bar
 	helpStyle = lipgloss.NewStyle().
@@ -122,11 +111,6 @@ var (
 	bookmarkStyle = lipgloss.NewStyle().
 			Foreground(orangeColor).
 			Bold(true)
-
-	// Search highlight
-	searchHighlightStyle = lipgloss.NewStyle().
-				Background(orangeColor).
-				Foreground(darkBgColor)
 
 	// Help overlay
 	helpOverlayStyle = lipgloss.NewStyle().

@@ -625,7 +625,7 @@ func (m browserModel) renderCreateQueue() string {
 	sb.WriteString("\n\n")
 
 	// Queue name input
-	queueLabel := "Queue name: "
+	var queueLabel string
 	if m.inputFocused == 0 {
 		queueLabel = selectedMessageStyle.Render("▶ Queue name: ")
 	} else {
@@ -638,7 +638,7 @@ func (m browserModel) renderCreateQueue() string {
 	sb.WriteString("\n\n")
 
 	// Routing key input
-	routingLabel := "Routing key: "
+	var routingLabel string
 	if m.inputFocused == 1 {
 		routingLabel = selectedMessageStyle.Render("▶ Routing key: ")
 	} else {
@@ -651,7 +651,7 @@ func (m browserModel) renderCreateQueue() string {
 	sb.WriteString("\n\n")
 
 	// Durable toggle
-	durableLabel := "Durable: "
+	var durableLabel string
 	checkbox := "[ ]"
 	if m.durableQueue {
 		checkbox = "[x]"

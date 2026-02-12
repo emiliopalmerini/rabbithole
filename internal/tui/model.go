@@ -1109,7 +1109,7 @@ func formatValueSyntax(sb *strings.Builder, v any, indent int) {
 		if jsonBytes, err := json.Marshal(val); err == nil {
 			sb.WriteString(string(jsonBytes))
 		} else {
-			sb.WriteString(fmt.Sprintf("%v", val))
+			fmt.Fprintf(sb, "%v", val)
 		}
 	}
 }

@@ -992,10 +992,11 @@ func truncate(s string, max int) string {
 	if max <= 3 {
 		return s
 	}
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-3] + "..."
+	return string(runes[:max-3]) + "..."
 }
 
 func formatHex(data []byte) string {

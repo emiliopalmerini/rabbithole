@@ -5,24 +5,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/desc/protoparse"
 	"github.com/jhump/protoreflect/dynamic"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // Decoder handles dynamic protobuf message decoding
 type Decoder struct {
 	messageTypes map[string]*desc.MessageDescriptor
 	allMessages  []*desc.MessageDescriptor
+	ParseErrors  []string
 }
-
-// ParseErrors holds errors encountered during parsing
-var ParseErrors []string
 
 // NewDecoder creates a decoder from a directory of .proto files
 func NewDecoder(protoPath string) (*Decoder, error) {
-	ParseErrors = nil // Reset errors
+	var parseErrors []string
 
 	// Find all .proto files
 	var protoFiles []string
@@ -47,7 +48,7 @@ func NewDecoder(protoPath string) (*Decoder, error) {
 		return nil, fmt.Errorf("no .proto files found in %s", protoPath)
 	}
 
-	ParseErrors = append(ParseErrors, fmt.Sprintf("Found %d proto files", len(protoFiles)))
+	parseErrors = append(parseErrors, fmt.Sprintf("Found %d proto files", len(protoFiles)))
 
 	// Parse proto files with well-known type support
 	parser := protoparse.Parser{
@@ -60,7 +61,7 @@ func NewDecoder(protoPath string) (*Decoder, error) {
 	for _, pf := range protoFiles {
 		fd, err := parser.ParseFiles(pf)
 		if err != nil {
-			ParseErrors = append(ParseErrors, fmt.Sprintf("%s: %v", pf, err))
+			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", pf, err))
 			continue
 		}
 		fds = append(fds, fd...)
@@ -81,6 +82,7 @@ func NewDecoder(protoPath string) (*Decoder, error) {
 	return &Decoder{
 		messageTypes: messageTypes,
 		allMessages:  allMessages,
+		ParseErrors:  parseErrors,
 	}, nil
 }
 
@@ -155,12 +157,13 @@ func routingKeyToTypeHint(routingKey string) string {
 	action := parts[len(parts)-1]
 
 	// Convert to PascalCase (e.g., "CountryUpdated")
-	entity = strings.Title(strings.ToLower(entity))
-	action = strings.Title(strings.ToLower(action))
+	titleCaser := cases.Title(language.English)
+	entity = titleCaser.String(strings.ToLower(entity))
+	action = titleCaser.String(strings.ToLower(action))
 
 	// Handle snake_case entities (e.g., "administrative_area" -> "AdministrativeArea")
 	entity = strings.ReplaceAll(entity, "_", " ")
-	entity = strings.Title(entity)
+	entity = titleCaser.String(entity)
 	entity = strings.ReplaceAll(entity, " ", "")
 
 	return entity + action
@@ -223,7 +226,7 @@ func convertValue(val any) any {
 		return messageToMap(v)
 	case []byte:
 		// Try to decode as string, otherwise return hex
-		if isValidUTF8(v) {
+		if isPrintableText(v) {
 			return string(v)
 		}
 		return fmt.Sprintf("0x%x", v)
@@ -238,7 +241,10 @@ func convertValue(val any) any {
 	}
 }
 
-func isValidUTF8(data []byte) bool {
+func isPrintableText(data []byte) bool {
+	if !utf8.Valid(data) {
+		return false
+	}
 	for _, b := range data {
 		if b < 32 && b != '\n' && b != '\r' && b != '\t' {
 			return false

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/epalmerini/rabbithole/internal/proto"
 	"github.com/epalmerini/rabbithole/internal/tui"
 )
 
@@ -12,6 +13,16 @@ var version = "dev"
 
 func main() {
 	cfg := parseFlags()
+
+	// Initialize proto decoder if path provided
+	if cfg.ProtoPath != "" {
+		dec, err := proto.NewDecoder(cfg.ProtoPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading proto files: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.Decoder = dec
+	}
 
 	if err := tui.Run(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

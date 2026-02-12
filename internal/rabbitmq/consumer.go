@@ -2,11 +2,10 @@ package rabbitmq
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"time"
 
+	"github.com/epalmerini/rabbithole/internal/randutil"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -64,7 +63,7 @@ func (c *Consumer) Consume(ctx context.Context) (<-chan Delivery, error) {
 
 	// If no queue name, create an exclusive auto-delete queue
 	if queueName == "" {
-		queueName = fmt.Sprintf("rabbithole-%s", randomSuffix())
+		queueName = fmt.Sprintf("rabbithole-%s", randutil.RandomSuffix())
 		exclusive = true
 		autoDelete = true
 		durable = false // Auto-generated queues are never durable
@@ -184,8 +183,3 @@ func (c *Consumer) Close() error {
 	return nil
 }
 
-func randomSuffix() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}

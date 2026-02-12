@@ -12,8 +12,6 @@ import (
 	"github.com/epalmerini/rabbithole/internal/rabbitmq"
 )
 
-var decoder *proto.Decoder
-
 // Connection retry settings
 const (
 	maxRetries     = 5
@@ -22,15 +20,6 @@ const (
 )
 
 func Run(cfg Config) error {
-	// Initialize proto decoder if path provided
-	if cfg.ProtoPath != "" {
-		var err error
-		decoder, err = proto.NewDecoder(cfg.ProtoPath)
-		if err != nil {
-			return fmt.Errorf("failed to load proto files: %w", err)
-		}
-	}
-
 	// Initialize persistence store if enabled (shared across consumer sessions)
 	var persistStore db.Store
 	if cfg.EnablePersistence {
@@ -123,7 +112,7 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			if err == nil && lastSession != nil {
 				dbMsgs, err := m.store.ListMessagesBySessionAsc(ctx, lastSession.ID, 1000, 0)
 				if err == nil {
-					historicalMsgs = convertDBMessages(dbMsgs)
+					historicalMsgs = convertDBMessages(dbMsgs, m.config.Decoder)
 				}
 			}
 
@@ -170,8 +159,8 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 				}
 
 				// Try to decode protobuf with routing key hint
-				if decoder != nil {
-					decoded, protoType, err := decoder.DecodeWithHintAndType(del.Body, del.RoutingKey)
+				if m.config.Decoder != nil {
+					decoded, protoType, err := m.config.Decoder.DecodeWithHintAndType(del.Body, del.RoutingKey)
 					if err != nil {
 						msg.DecodeErr = err
 					} else {
@@ -255,7 +244,7 @@ func (m *model) cleanup() {
 }
 
 // convertDBMessages converts database messages to TUI messages
-func convertDBMessages(dbMsgs []db.Message) []Message {
+func convertDBMessages(dbMsgs []db.Message, dec *proto.Decoder) []Message {
 	msgs := make([]Message, len(dbMsgs))
 	for i, dbMsg := range dbMsgs {
 		msg := Message{
@@ -293,8 +282,8 @@ func convertDBMessages(dbMsgs []db.Message) []Message {
 			}
 		}
 		// Try to decode protobuf if decoder is available
-		if decoder != nil {
-			decoded, protoType, err := decoder.DecodeWithHintAndType(dbMsg.Body, dbMsg.RoutingKey)
+		if dec != nil {
+			decoded, protoType, err := dec.DecodeWithHintAndType(dbMsg.Body, dbMsg.RoutingKey)
 			if err == nil {
 				msg.Decoded = decoded
 				msg.ProtoType = protoType

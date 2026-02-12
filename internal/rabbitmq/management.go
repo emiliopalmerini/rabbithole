@@ -1,6 +1,8 @@
 package rabbitmq
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,15 +80,15 @@ func NewManagementClient(amqpURL string) (*ManagementClient, error) {
 	}, nil
 }
 
-func (c *ManagementClient) doRequest(method, path string, body []byte) (*http.Response, error) {
+func (c *ManagementClient) doRequest(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
 	reqURL := c.baseURL + path
 
 	var req *http.Request
 	var err error
 	if body != nil {
-		req, err = http.NewRequest(method, reqURL, strings.NewReader(string(body)))
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, bytes.NewReader(body))
 	} else {
-		req, err = http.NewRequest(method, reqURL, nil)
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -98,9 +100,9 @@ func (c *ManagementClient) doRequest(method, path string, body []byte) (*http.Re
 	return c.client.Do(req)
 }
 
-func (c *ManagementClient) GetExchanges(vhost string) ([]Exchange, error) {
+func (c *ManagementClient) GetExchanges(ctx context.Context, vhost string) ([]Exchange, error) {
 	path := fmt.Sprintf("/exchanges/%s", url.PathEscape(vhost))
-	resp, err := c.doRequest("GET", path, nil)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -126,9 +128,9 @@ func (c *ManagementClient) GetExchanges(vhost string) ([]Exchange, error) {
 	return filtered, nil
 }
 
-func (c *ManagementClient) GetQueues(vhost string) ([]Queue, error) {
+func (c *ManagementClient) GetQueues(ctx context.Context, vhost string) ([]Queue, error) {
 	path := fmt.Sprintf("/queues/%s", url.PathEscape(vhost))
-	resp, err := c.doRequest("GET", path, nil)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +148,10 @@ func (c *ManagementClient) GetQueues(vhost string) ([]Queue, error) {
 	return queues, nil
 }
 
-func (c *ManagementClient) GetBindings(vhost, exchange string) ([]Binding, error) {
+func (c *ManagementClient) GetBindings(ctx context.Context, vhost, exchange string) ([]Binding, error) {
 	path := fmt.Sprintf("/exchanges/%s/%s/bindings/source",
 		url.PathEscape(vhost), url.PathEscape(exchange))
-	resp, err := c.doRequest("GET", path, nil)
+	resp, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +169,11 @@ func (c *ManagementClient) GetBindings(vhost, exchange string) ([]Binding, error
 	return bindings, nil
 }
 
-func (c *ManagementClient) CreateQueue(vhost, name string, durable bool) error {
+func (c *ManagementClient) CreateQueue(ctx context.Context, vhost, name string, durable bool) error {
 	path := fmt.Sprintf("/queues/%s/%s", url.PathEscape(vhost), url.PathEscape(name))
 	body := fmt.Sprintf(`{"durable":%t,"auto_delete":false}`, durable)
 
-	resp, err := c.doRequest("PUT", path, []byte(body))
+	resp, err := c.doRequest(ctx, "PUT", path, []byte(body))
 	if err != nil {
 		return err
 	}
@@ -184,12 +186,12 @@ func (c *ManagementClient) CreateQueue(vhost, name string, durable bool) error {
 	return nil
 }
 
-func (c *ManagementClient) CreateBinding(vhost, exchange, queue, routingKey string) error {
+func (c *ManagementClient) CreateBinding(ctx context.Context, vhost, exchange, queue, routingKey string) error {
 	path := fmt.Sprintf("/bindings/%s/e/%s/q/%s",
 		url.PathEscape(vhost), url.PathEscape(exchange), url.PathEscape(queue))
 	body := fmt.Sprintf(`{"routing_key":%q}`, routingKey)
 
-	resp, err := c.doRequest("POST", path, []byte(body))
+	resp, err := c.doRequest(ctx, "POST", path, []byte(body))
 	if err != nil {
 		return err
 	}
@@ -202,10 +204,10 @@ func (c *ManagementClient) CreateBinding(vhost, exchange, queue, routingKey stri
 	return nil
 }
 
-func (c *ManagementClient) DeleteQueue(vhost, name string) error {
+func (c *ManagementClient) DeleteQueue(ctx context.Context, vhost, name string) error {
 	path := fmt.Sprintf("/queues/%s/%s", url.PathEscape(vhost), url.PathEscape(name))
 
-	resp, err := c.doRequest("DELETE", path, nil)
+	resp, err := c.doRequest(ctx, "DELETE", path, nil)
 	if err != nil {
 		return err
 	}

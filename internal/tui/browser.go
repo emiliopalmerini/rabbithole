@@ -1,14 +1,15 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/epalmerini/rabbithole/internal/randutil"
 	"github.com/epalmerini/rabbithole/internal/rabbitmq"
 )
 
@@ -100,8 +101,11 @@ func newBrowserModel(cfg Config) browserModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
 
+	mgmt, _ := rabbitmq.NewManagementClient(cfg.RabbitMQURL)
+
 	return browserModel{
 		config:          cfg,
+		mgmt:            mgmt,
 		view:            viewExchanges,
 		routingKeyInput: routingInput,
 		queueNameInput:  queueInput,
@@ -121,18 +125,19 @@ func (m browserModel) Init() tea.Cmd {
 }
 
 func (m browserModel) loadTopology() tea.Cmd {
+	mgmt := m.mgmt
 	return func() tea.Msg {
-		mgmt, err := rabbitmq.NewManagementClient(m.config.RabbitMQURL)
-		if err != nil {
-			return errorMsg{err: err}
+		if mgmt == nil {
+			return errorMsg{err: fmt.Errorf("management client not initialized")}
 		}
 
-		exchanges, err := mgmt.GetExchanges("/")
+		ctx := context.Background()
+		exchanges, err := mgmt.GetExchanges(ctx, "/")
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to load exchanges: %w", err)}
 		}
 
-		queues, err := mgmt.GetQueues("/")
+		queues, err := mgmt.GetQueues(ctx, "/")
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to load queues: %w", err)}
 		}
@@ -142,13 +147,13 @@ func (m browserModel) loadTopology() tea.Cmd {
 }
 
 func (m browserModel) loadBindings(exchange string) tea.Cmd {
+	mgmt := m.mgmt
 	return func() tea.Msg {
-		mgmt, err := rabbitmq.NewManagementClient(m.config.RabbitMQURL)
-		if err != nil {
-			return errorMsg{err: err}
+		if mgmt == nil {
+			return errorMsg{err: fmt.Errorf("management client not initialized")}
 		}
 
-		bindings, err := mgmt.GetBindings("/", exchange)
+		bindings, err := mgmt.GetBindings(context.Background(), "/", exchange)
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to load bindings: %w", err)}
 		}
@@ -158,13 +163,13 @@ func (m browserModel) loadBindings(exchange string) tea.Cmd {
 }
 
 func (m browserModel) deleteQueue(queueName string) tea.Cmd {
+	mgmt := m.mgmt
 	return func() tea.Msg {
-		mgmt, err := rabbitmq.NewManagementClient(m.config.RabbitMQURL)
-		if err != nil {
-			return errorMsg{err: err}
+		if mgmt == nil {
+			return errorMsg{err: fmt.Errorf("management client not initialized")}
 		}
 
-		err = mgmt.DeleteQueue("/", queueName)
+		err := mgmt.DeleteQueue(context.Background(), "/", queueName)
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to delete queue: %w", err)}
 		}
@@ -240,7 +245,7 @@ func (m browserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				queueName := m.queueNameInput.Value()
 				routingKey := m.routingKeyInput.Value()
 				if queueName == "" {
-					queueName = fmt.Sprintf("rabbithole-%s", randomSuffix())
+					queueName = fmt.Sprintf("rabbithole-%s", randutil.RandomSuffix())
 				}
 				if routingKey == "" {
 					routingKey = "#"
@@ -369,8 +374,6 @@ func (m browserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.exchanges = msg.exchanges
 		m.queues = msg.queues
-		mgmt, _ := rabbitmq.NewManagementClient(m.config.RabbitMQURL)
-		m.mgmt = mgmt
 		m.applyFilter()
 
 	case bindingsLoadedMsg:
@@ -706,7 +709,3 @@ func (m browserModel) renderHelp() string {
 	return helpStyle.Render(strings.Join(parts, "  │  "))
 }
 
-func randomSuffix() string {
-	// Simple random suffix - reuse from consumer.go
-	return fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-}

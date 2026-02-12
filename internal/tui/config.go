@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/epalmerini/rabbithole/internal/proto"
+
 type Config struct {
 	RabbitMQURL string
 	Exchange    string
@@ -8,6 +10,7 @@ type Config struct {
 	ProtoPath   string
 	ShowVersion bool
 	Durable     bool
+	Decoder     *proto.Decoder
 
 	// UI options
 	AutoPauseOnSelect bool    // Pause when user navigates

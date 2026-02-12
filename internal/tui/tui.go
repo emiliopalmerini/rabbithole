@@ -14,15 +14,6 @@ import (
 
 var decoder *proto.Decoder
 
-var protoTypesLoaded int
-
-// Persistence state (package-level for access from model methods)
-var (
-	store       db.Store
-	asyncWriter *db.AsyncWriter
-	sessionID   int64
-)
-
 // Connection retry settings
 const (
 	maxRetries     = 5
@@ -38,25 +29,17 @@ func Run(cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("failed to load proto files: %w", err)
 		}
-		protoTypesLoaded = len(decoder.ListTypes())
 	}
 
-	// Initialize persistence if enabled
+	// Initialize persistence store if enabled (shared across consumer sessions)
+	var persistStore db.Store
 	if cfg.EnablePersistence {
 		var err error
-		store, err = db.NewStore(cfg.DBPath)
+		persistStore, err = db.NewStore(cfg.DBPath)
 		if err != nil {
 			return fmt.Errorf("failed to initialize database: %w", err)
 		}
-		defer func() {
-			if asyncWriter != nil {
-				asyncWriter.Close()
-			}
-			if sessionID > 0 {
-				store.EndSession(context.Background(), sessionID)
-			}
-			store.Close()
-		}()
+		defer func() { _ = persistStore.Close() }()
 	}
 
 	var m tea.Model
@@ -64,24 +47,38 @@ func Run(cfg Config) error {
 	// If exchange is specified via CLI, go directly to consumer
 	// Otherwise, show the browser
 	if cfg.Exchange != "" {
-		m = initialModel(cfg)
+		m = initialModel(cfg, persistStore)
 	} else {
-		m = newAppModel(cfg)
+		m = newAppModel(cfg, persistStore)
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		return fmt.Errorf("error running program: %w", err)
+	}
+
+	// Clean up consumer resources from final model state
+	switch fm := finalModel.(type) {
+	case model:
+		fm.cleanup()
+	case appModel:
+		fm.consumer.cleanup()
 	}
 
 	return nil
 }
 
-// retryMsg is sent when a retry attempt should be made
+// retryMsg is sent when a connection attempt fails and should be retried after a delay
 type retryMsg struct {
 	attempt int
 	delay   time.Duration
+}
+
+// retryTickMsg is sent after the backoff delay has elapsed, triggering the actual retry
+type retryTickMsg struct {
+	attempt int
 }
 
 func (m model) connectCmd() tea.Cmd {
@@ -110,25 +107,21 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			return connectionErrorMsg{err: fmt.Errorf("failed after %d attempts: %w", maxRetries, err)}
 		}
 
+		// Clean up previous consumer resources (captured from model snapshot)
+		m.cleanup()
+
 		// Load historical messages and create session for persistence
 		var historicalMsgs []Message
-		if store != nil {
+		var writer *db.AsyncWriter
+		var sid int64
+
+		if m.store != nil {
 			ctx := context.Background()
 
-			// Close any existing writer and session before creating new ones
-			if asyncWriter != nil {
-				asyncWriter.Close()
-				asyncWriter = nil
-			}
-			if sessionID > 0 {
-				store.EndSession(ctx, sessionID)
-				sessionID = 0
-			}
-
 			// Load messages from last session on this exchange
-			lastSession, err := store.GetLastSessionByExchange(ctx, m.config.Exchange)
+			lastSession, err := m.store.GetLastSessionByExchange(ctx, m.config.Exchange)
 			if err == nil && lastSession != nil {
-				dbMsgs, err := store.ListMessagesBySessionAsc(ctx, lastSession.ID, 1000, 0)
+				dbMsgs, err := m.store.ListMessagesBySessionAsc(ctx, lastSession.ID, 1000, 0)
 				if err == nil {
 					historicalMsgs = convertDBMessages(dbMsgs)
 				}
@@ -138,17 +131,20 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			if queueName == "" {
 				queueName = "(auto-generated)"
 			}
-			sid, err := store.CreateSession(ctx, m.config.Exchange, m.config.RoutingKey, queueName, m.config.RabbitMQURL)
+			newSID, err := m.store.CreateSession(ctx, m.config.Exchange, m.config.RoutingKey, queueName, m.config.RabbitMQURL)
 			if err == nil {
-				sessionID = sid
-				asyncWriter = db.NewAsyncWriter(store, sessionID)
+				sid = newSID
+				writer = db.NewAsyncWriter(m.store, sid)
 			}
 		}
+
+		// Create cancellable context for the consumer goroutine
+		ctx, cancel := context.WithCancel(context.Background())
 
 		msgChan := make(chan Message, 100)
 
 		go func() {
-			ctx := context.Background()
+			defer close(msgChan)
 			deliveries, err := consumer.Consume(ctx)
 			if err != nil {
 				return
@@ -184,9 +180,9 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 					}
 				}
 
-				// Persist message if enabled
-				if asyncWriter != nil {
-					asyncWriter.Save(&db.MessageRecord{
+				// Persist message if enabled (uses local writer, not global)
+				if writer != nil {
+					writer.Save(&db.MessageRecord{
 						Exchange:      del.Exchange,
 						RoutingKey:    del.RoutingKey,
 						Body:          del.Body,
@@ -209,6 +205,10 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			msgChan:         msgChan,
 			historicalMsgs:  historicalMsgs,
 			historicalCount: len(historicalMsgs),
+			consumer:        consumer,
+			cancelConsume:   cancel,
+			asyncWriter:     writer,
+			sessionID:       sid,
 		}
 	}
 }
@@ -226,11 +226,32 @@ func (m model) waitForMessage() tea.Cmd {
 	}
 }
 
-// scheduleRetry returns a command that waits and then triggers a retry
+// scheduleRetry returns a command that waits for the backoff delay, then triggers the retry
 func scheduleRetry(attempt int, delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(_ time.Time) tea.Msg {
-		return retryMsg{attempt: attempt, delay: delay}
+		return retryTickMsg{attempt: attempt}
 	})
+}
+
+// cleanup releases consumer and persistence resources.
+// Safe to call on zero-value or already-cleaned-up models.
+func (m *model) cleanup() {
+	if m.cancelConsume != nil {
+		m.cancelConsume()
+		m.cancelConsume = nil
+	}
+	if m.amqpConsumer != nil {
+		_ = m.amqpConsumer.Close()
+		m.amqpConsumer = nil
+	}
+	if m.asyncWriter != nil {
+		m.asyncWriter.Close()
+		m.asyncWriter = nil
+	}
+	if m.sessionID > 0 && m.store != nil {
+		_ = m.store.EndSession(context.Background(), m.sessionID)
+		m.sessionID = 0
+	}
 }
 
 // convertDBMessages converts database messages to TUI messages

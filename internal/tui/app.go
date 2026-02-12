@@ -2,7 +2,7 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/epalmerini/rabbithole/internal/proto"
+	"github.com/epalmerini/rabbithole/internal/db"
 )
 
 type appView int
@@ -13,19 +13,21 @@ const (
 )
 
 type appModel struct {
-	config   Config
-	view     appView
+	config Config
+	store  db.Store
+	view   appView
+
 	browser  browserModel
 	consumer model
-	decoder  *proto.Decoder
 
 	// Track queues created across views for deletion
 	createdQueues map[string]bool
 }
 
-func newAppModel(cfg Config) appModel {
+func newAppModel(cfg Config, store db.Store) appModel {
 	return appModel{
 		config:        cfg,
+		store:         store,
 		view:          appViewBrowser,
 		browser:       newBrowserModel(cfg),
 		createdQueues: make(map[string]bool),
@@ -48,6 +50,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.browser.createdQueues[q] = true
 		}
 
+		// Clean up previous consumer before starting a new one
+		m.consumer.cleanup()
+
 		// Switch to consumer view
 		m.view = appViewConsumer
 		consumerCfg := m.config
@@ -55,7 +60,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		consumerCfg.QueueName = msg.queue
 		consumerCfg.RoutingKey = msg.routingKey
 		consumerCfg.Durable = msg.durable
-		m.consumer = initialModel(consumerCfg)
+		m.consumer = initialModel(consumerCfg, m.store)
 		m.consumer.width = m.browser.width
 		m.consumer.height = m.browser.height
 		return m, m.consumer.Init()
@@ -63,6 +68,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Global escape to go back to browser from consumer
 		if m.view == appViewConsumer && msg.String() == "b" {
+			// Clean up consumer resources on navigate-away
+			m.consumer.cleanup()
+
 			m.view = appViewBrowser
 			// Sync created queues back to browser
 			for q := range m.createdQueues {

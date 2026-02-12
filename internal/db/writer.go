@@ -13,7 +13,8 @@ type AsyncWriter struct {
 	sessionID int64
 	ch        chan *MessageRecord
 	wg        sync.WaitGroup
-	done      chan struct{}
+	mu        sync.RWMutex
+	closed    bool
 }
 
 // NewAsyncWriter creates a new async writer with the given store and session
@@ -22,7 +23,6 @@ func NewAsyncWriter(store Store, sessionID int64) *AsyncWriter {
 		store:     store,
 		sessionID: sessionID,
 		ch:        make(chan *MessageRecord, defaultBufferSize),
-		done:      make(chan struct{}),
 	}
 	w.wg.Add(1)
 	go w.run()
@@ -30,47 +30,35 @@ func NewAsyncWriter(store Store, sessionID int64) *AsyncWriter {
 }
 
 // Save queues a message for persistence. Non-blocking; drops message if buffer is full.
+// Returns false if the writer is closed or the buffer is full.
 func (w *AsyncWriter) Save(msg *MessageRecord) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.closed {
+		return false
+	}
 	msg.SessionID = w.sessionID
 	select {
 	case w.ch <- msg:
 		return true
 	default:
-		// Buffer full, drop message
 		return false
 	}
 }
 
 func (w *AsyncWriter) run() {
 	defer w.wg.Done()
-	for {
-		select {
-		case msg, ok := <-w.ch:
-			if !ok {
-				return
-			}
-			// Best effort insert, ignore errors
-			_, _ = w.store.InsertMessage(context.Background(), msg)
-		case <-w.done:
-			// Drain remaining messages
-			for {
-				select {
-				case msg, ok := <-w.ch:
-					if !ok {
-						return
-					}
-					_, _ = w.store.InsertMessage(context.Background(), msg)
-				default:
-					return
-				}
-			}
-		}
+	for msg := range w.ch {
+		// Best effort insert, ignore errors
+		_, _ = w.store.InsertMessage(context.Background(), msg)
 	}
 }
 
 // Close gracefully shuts down the writer, draining the buffer
 func (w *AsyncWriter) Close() {
-	close(w.done)
+	w.mu.Lock()
+	w.closed = true
 	close(w.ch)
+	w.mu.Unlock()
 	w.wg.Wait()
 }

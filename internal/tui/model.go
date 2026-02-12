@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/epalmerini/rabbithole/internal/db"
+	"github.com/epalmerini/rabbithole/internal/rabbitmq"
 )
 
 type connectionState int
@@ -37,6 +40,15 @@ type model struct {
 	showRaw       bool
 	paused        bool
 	msgChan       <-chan Message
+
+	// Consumer lifecycle
+	amqpConsumer  *rabbitmq.Consumer
+	cancelConsume context.CancelFunc
+
+	// Persistence (injected store + per-session state)
+	store       db.Store
+	asyncWriter *db.AsyncWriter
+	sessionID   int64
 
 	// Vim command state
 	vimKeys VimKeyState
@@ -78,6 +90,10 @@ type connectedMsg struct {
 	msgChan         <-chan Message
 	historicalMsgs  []Message
 	historicalCount int
+	consumer        *rabbitmq.Consumer
+	cancelConsume   context.CancelFunc
+	asyncWriter     *db.AsyncWriter
+	sessionID       int64
 }
 
 type connectionErrorMsg struct {
@@ -86,7 +102,7 @@ type connectionErrorMsg struct {
 
 type clearStatusMsg struct{}
 
-func initialModel(cfg Config) model {
+func initialModel(cfg Config, store db.Store) model {
 	si := textinput.New()
 	si.Placeholder = "Search..."
 	si.CharLimit = 100
@@ -103,6 +119,7 @@ func initialModel(cfg Config) model {
 
 	return model{
 		config:         cfg,
+		store:          store,
 		messages:       make([]Message, 0, 1000),
 		connState:      stateConnecting,
 		viewport:       viewport.New(80, 20),
@@ -290,6 +307,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connectedMsg:
 		m.connState = stateConnected
 		m.msgChan = msg.msgChan
+		m.amqpConsumer = msg.consumer
+		m.cancelConsume = msg.cancelConsume
+		m.asyncWriter = msg.asyncWriter
+		m.sessionID = msg.sessionID
 		// Load historical messages first
 		if len(msg.historicalMsgs) > 0 {
 			m.messages = msg.historicalMsgs
@@ -304,6 +325,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case retryMsg:
 		m.connState = stateConnecting
 		m.connError = nil
+		cmds = append(cmds, scheduleRetry(msg.attempt, msg.delay))
+
+	case retryTickMsg:
 		cmds = append(cmds, m.connectWithRetry(msg.attempt))
 
 	case msgReceived:

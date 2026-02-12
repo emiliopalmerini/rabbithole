@@ -14,6 +14,10 @@ A beautiful TUI for consuming and inspecting RabbitMQ messages with Protobuf dec
 - **Pause/Resume** - Freeze the stream to inspect messages
 - **Durable Queues** - Create persistent queues that survive broker restarts
 - **SQLite Persistence** - Optionally save messages to a local database for history and replay
+- **Session History** - Auto-load messages from previous sessions when persistence is enabled
+- **Search & Filter** - Search through messages with vim-style keybindings (`/`, `n`, `N`)
+- **Bookmarks** - Mark important messages for quick reference
+- **Export & Yank** - Export messages or copy to clipboard
 
 ## Installation
 
@@ -26,7 +30,19 @@ Or build from source:
 ```bash
 git clone https://github.com/epalmerini/rabbithole.git
 cd rabbithole
-go build -o rabbithole .
+make          # or: go build -o rabbithole .
+```
+
+### Build Targets
+
+A `Makefile` is provided for common tasks:
+
+```bash
+make          # Format, vet, test, and build
+make build    # Build the binary
+make test     # Run tests
+make clean    # Remove build artifacts
+make help     # Show all available targets
 ```
 
 ## Usage
@@ -91,6 +107,8 @@ Each session records:
 
 The database includes FTS5 full-text search on message bodies and routing keys.
 
+**Session History**: When persistence is enabled, rabbithole automatically loads messages from your last session on the same exchange. Historical messages are displayed with a muted style and marked with `H` (historical) vs `L` (live) in the status bar.
+
 ## CLI Flags
 
 | Flag | Default | Description |
@@ -102,21 +120,54 @@ The database includes FTS5 full-text search on message bodies and routing keys.
 | `-proto` | | Path to directory containing `.proto` files |
 | `-persist` | `false` | Enable SQLite message persistence |
 | `-db` | `~/.local/share/rabbithole/rabbithole.db` | Custom database path |
+| `-management-url` | (auto-detected from `-url`) | Override RabbitMQ Management API URL |
 | `-version` | | Show version and exit |
 
 ## Keybindings
 
 ### Consumer View
 
+#### Navigation
 | Key | Action |
 |-----|--------|
 | `↑` / `k` | Move selection up |
 | `↓` / `j` | Move selection down |
-| `g` | Jump to first message |
+| `gg` | Jump to first message |
 | `G` | Jump to last message |
+| `zz` | Center current line |
+| `5j` / `3k` | Move by count (vim-style numeric prefixes) |
+
+#### Search
+| Key | Action |
+|-----|--------|
+| `/` | Start search (type query, press Enter) |
+| `n` | Next search result |
+| `N` | Previous search result |
+| `Esc` | Exit search mode |
+
+#### Actions
+| Key | Action |
+|-----|--------|
 | `r` | Toggle raw/decoded view |
 | `p` / `Space` | Pause/resume consuming |
 | `c` | Clear all messages |
+| `y` | Yank (copy) current message to clipboard |
+| `e` | Export all messages |
+| `m` | Toggle bookmark on current message |
+| `'` | Jump to next bookmark |
+
+#### View
+| Key | Action |
+|-----|--------|
+| `t` | Toggle compact mode |
+| `T` | Toggle relative/absolute timestamps |
+| `H` | Resize pane left (wider detail) |
+| `L` | Resize pane right (wider list) |
+| `?` | Toggle help overlay |
+
+#### Navigation
+| Key | Action |
+|-----|--------|
 | `b` | Back to topology browser |
 | `q` | Quit |
 
@@ -127,7 +178,8 @@ The database includes FTS5 full-text search on message bodies and routing keys.
 | `↑` / `k` | Move selection up |
 | `↓` / `j` | Move selection down |
 | `Enter` | Select exchange/binding |
-| `Esc` | Go back |
+| `/` | Filter exchanges/bindings (type to search) |
+| `Esc` | Go back / Exit filter mode |
 | `r` | Refresh topology |
 | `q` | Quit |
 

@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/epalmerini/rabbithole/internal/randutil"
 	"github.com/epalmerini/rabbithole/internal/rabbitmq"
+	"github.com/epalmerini/rabbithole/internal/randutil"
 )
 
 type browserView int
@@ -708,4 +708,3 @@ func (m browserModel) renderHelp() string {
 
 	return helpStyle.Render(strings.Join(parts, "  │  "))
 }
-

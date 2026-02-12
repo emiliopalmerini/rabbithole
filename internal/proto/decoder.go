@@ -1,23 +1,25 @@
 package proto
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jhump/protoreflect/desc"
-	"github.com/jhump/protoreflect/desc/protoparse"
-	"github.com/jhump/protoreflect/dynamic"
+	"github.com/bufbuild/protocompile"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 // Decoder handles dynamic protobuf message decoding
 type Decoder struct {
-	messageTypes map[string]*desc.MessageDescriptor
-	allMessages  []*desc.MessageDescriptor
+	messageTypes map[string]protoreflect.MessageDescriptor
+	allMessages  []protoreflect.MessageDescriptor
 	ParseErrors  []string
 }
 
@@ -51,30 +53,38 @@ func NewDecoder(protoPath string) (*Decoder, error) {
 	parseErrors = append(parseErrors, fmt.Sprintf("Found %d proto files", len(protoFiles)))
 
 	// Parse proto files with well-known type support
-	parser := protoparse.Parser{
-		ImportPaths:           []string{protoPath},
-		IncludeSourceCodeInfo: true,
+	compiler := protocompile.Compiler{
+		Resolver: protocompile.WithStandardImports(
+			&protocompile.SourceResolver{
+				ImportPaths: []string{protoPath},
+			},
+		),
+		SourceInfoMode: protocompile.SourceInfoStandard,
 	}
 
-	// Try to parse all files, collecting successful ones
-	var fds []*desc.FileDescriptor
+	// Try to compile all files, collecting successful ones
+	var fds []protoreflect.FileDescriptor
 	for _, pf := range protoFiles {
-		fd, err := parser.ParseFiles(pf)
+		compiled, err := compiler.Compile(context.Background(), pf)
 		if err != nil {
 			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", pf, err))
 			continue
 		}
-		fds = append(fds, fd...)
+		for _, fd := range compiled {
+			fds = append(fds, fd)
+		}
 	}
 
 	// Build message type map
-	messageTypes := make(map[string]*desc.MessageDescriptor)
-	var allMessages []*desc.MessageDescriptor
+	messageTypes := make(map[string]protoreflect.MessageDescriptor)
+	var allMessages []protoreflect.MessageDescriptor
 
 	for _, fd := range fds {
-		for _, md := range fd.GetMessageTypes() {
-			messageTypes[md.GetName()] = md
-			messageTypes[md.GetFullyQualifiedName()] = md
+		msgs := fd.Messages()
+		for i := 0; i < msgs.Len(); i++ {
+			md := msgs.Get(i)
+			messageTypes[string(md.Name())] = md
+			messageTypes[string(md.FullName())] = md
 			allMessages = append(allMessages, md)
 		}
 	}
@@ -108,14 +118,13 @@ func (d *Decoder) DecodeWithHintAndType(data []byte, routingKey string) (map[str
 	typeHint := routingKeyToTypeHint(routingKey)
 
 	// Try each message type and find the best match
-	var bestMatch *dynamic.Message
+	var bestMatch *dynamicpb.Message
 	var bestMatchName string
 	bestScore := 0
 
 	for _, md := range d.allMessages {
-		msg := dynamic.NewMessage(md)
-		err := msg.Unmarshal(data)
-		if err != nil {
+		msg := dynamicpb.NewMessage(md)
+		if err := proto.Unmarshal(data, msg); err != nil {
 			continue
 		}
 
@@ -123,7 +132,7 @@ func (d *Decoder) DecodeWithHintAndType(data []byte, routingKey string) (map[str
 		score := countPopulatedFields(msg)
 
 		// Boost score if name matches the routing key hint
-		name := md.GetName()
+		name := string(md.Name())
 		if typeHint != "" && strings.EqualFold(name, typeHint) {
 			score += 1000 // Strong preference for matching type
 		}
@@ -176,8 +185,8 @@ func (d *Decoder) DecodeAs(data []byte, typeName string) (map[string]any, error)
 		return nil, fmt.Errorf("unknown message type: %s", typeName)
 	}
 
-	msg := dynamic.NewMessage(md)
-	if err := msg.Unmarshal(data); err != nil {
+	msg := dynamicpb.NewMessage(md)
+	if err := proto.Unmarshal(data, msg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal: %w", err)
 	}
 
@@ -195,49 +204,84 @@ func (d *Decoder) ListTypes() []string {
 	return types
 }
 
-func countPopulatedFields(msg *dynamic.Message) int {
+func countPopulatedFields(msg *dynamicpb.Message) int {
 	count := 0
-	for _, fd := range msg.GetKnownFields() {
-		if msg.HasField(fd) {
-			count++
-		}
-	}
+	msg.Range(func(_ protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		count++
+		return true
+	})
 	return count
 }
 
-func messageToMap(msg *dynamic.Message) map[string]any {
+func messageToMap(msg *dynamicpb.Message) map[string]any {
 	result := make(map[string]any)
-
-	for _, fd := range msg.GetKnownFields() {
-		if !msg.HasField(fd) {
-			continue
-		}
-
-		val := msg.GetField(fd)
-		result[fd.GetName()] = convertValue(val)
-	}
-
+	msg.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		result[string(fd.Name())] = convertValue(fd, v)
+		return true
+	})
 	return result
 }
 
-func convertValue(val any) any {
-	switch v := val.(type) {
-	case *dynamic.Message:
-		return messageToMap(v)
-	case []byte:
-		// Try to decode as string, otherwise return hex
-		if isPrintableText(v) {
-			return string(v)
-		}
-		return fmt.Sprintf("0x%x", v)
-	case []any:
-		result := make([]any, len(v))
-		for i, item := range v {
-			result[i] = convertValue(item)
+func convertValue(fd protoreflect.FieldDescriptor, v protoreflect.Value) any {
+	// Handle repeated fields (lists)
+	if fd.IsList() {
+		list := v.List()
+		result := make([]any, list.Len())
+		for i := 0; i < list.Len(); i++ {
+			result[i] = convertSingularValue(fd, list.Get(i))
 		}
 		return result
+	}
+
+	// Handle map fields
+	if fd.IsMap() {
+		result := make(map[string]any)
+		valDesc := fd.MapValue()
+		v.Map().Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+			key := fmt.Sprintf("%v", k.Value().Interface())
+			result[key] = convertSingularValue(valDesc, mv)
+			return true
+		})
+		return result
+	}
+
+	return convertSingularValue(fd, v)
+}
+
+func convertSingularValue(fd protoreflect.FieldDescriptor, v protoreflect.Value) any {
+	switch fd.Kind() {
+	case protoreflect.MessageKind, protoreflect.GroupKind:
+		nested := v.Message()
+		result := make(map[string]any)
+		nested.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			result[string(fd.Name())] = convertValue(fd, v)
+			return true
+		})
+		return result
+	case protoreflect.BytesKind:
+		b := v.Bytes()
+		if isPrintableText(b) {
+			return string(b)
+		}
+		return fmt.Sprintf("0x%x", b)
+	case protoreflect.EnumKind:
+		return int32(v.Enum())
+	case protoreflect.BoolKind:
+		return v.Bool()
+	case protoreflect.StringKind:
+		return v.String()
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		return v.Int()
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return v.Int()
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		return v.Uint()
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		return v.Uint()
+	case protoreflect.FloatKind, protoreflect.DoubleKind:
+		return v.Float()
 	default:
-		return v
+		return v.Interface()
 	}
 }
 

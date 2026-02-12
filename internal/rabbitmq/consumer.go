@@ -183,4 +183,3 @@ func (c *Consumer) Close() error {
 	}
 	return chanErr
 }
-

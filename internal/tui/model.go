@@ -242,9 +242,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "search_prev":
 			m.prevSearchResult()
 		case "yank":
-			m.yankMessage()
+			return m, m.yankMessage()
 		case "export":
-			m.exportMessages()
+			return m, m.exportMessages()
 		case "bookmark_toggle":
 			m.toggleBookmark()
 		case "bookmark_next":
@@ -494,9 +494,9 @@ func (m *model) nextBookmark() {
 	}
 }
 
-func (m *model) yankMessage() {
+func (m *model) yankMessage() tea.Cmd {
 	if len(m.messages) == 0 || m.selectedIdx >= len(m.messages) {
-		return
+		return nil
 	}
 
 	msg := m.messages[m.selectedIdx]
@@ -525,16 +525,14 @@ func (m *model) yankMessage() {
 	content, _ := json.MarshalIndent(yank, "", "  ")
 
 	if err := clipboard.WriteAll(string(content)); err != nil {
-		m.setStatusMsg("Copy failed: " + err.Error())
-	} else {
-		m.setStatusMsg("Copied to clipboard")
+		return m.setStatusMsg("Copy failed: " + err.Error())
 	}
+	return m.setStatusMsg("Copied to clipboard")
 }
 
-func (m *model) exportMessages() {
+func (m *model) exportMessages() tea.Cmd {
 	if len(m.messages) == 0 {
-		m.setStatusMsg("No messages to export")
-		return
+		return m.setStatusMsg("No messages to export")
 	}
 
 	type exportMessage struct {
@@ -563,15 +561,17 @@ func (m *model) exportMessages() {
 	filename := fmt.Sprintf("rabbithole-export-%s.json", time.Now().Format("20060102-150405"))
 	data, _ := json.MarshalIndent(exports, "", "  ")
 	if err := os.WriteFile(filename, data, 0644); err != nil {
-		m.setStatusMsg("Export failed: " + err.Error())
-	} else {
-		m.setStatusMsg(fmt.Sprintf("Exported to %s", filename))
+		return m.setStatusMsg("Export failed: " + err.Error())
 	}
+	return m.setStatusMsg(fmt.Sprintf("Exported to %s", filename))
 }
 
-func (m *model) setStatusMsg(msg string) {
+func (m *model) setStatusMsg(msg string) tea.Cmd {
 	m.statusMsg = msg
 	m.statusMsgTime = time.Now()
+	return tea.Tick(3*time.Second, func(_ time.Time) tea.Msg {
+		return clearStatusMsg{}
+	})
 }
 
 func (m model) View() string {

@@ -17,6 +17,9 @@ type Config struct {
 	DefaultSplitRatio float64 // Initial split ratio (0.5 = 50/50)
 	CompactMode       bool    // Show only routing key, no timestamp
 
+	// Management API options
+	ManagementURL string // Override management API URL (empty = derive from AMQP URL)
+
 	// Persistence options
 	EnablePersistence bool   // Enable SQLite persistence
 	DBPath            string // Custom database path (empty = default)

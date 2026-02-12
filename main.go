@@ -41,6 +41,7 @@ func parseFlags() tui.Config {
 	flag.BoolVar(&cfg.ShowVersion, "version", false, "Show version")
 	flag.BoolVar(&cfg.EnablePersistence, "persist", false, "Enable SQLite message persistence")
 	flag.StringVar(&cfg.DBPath, "db", "", "Custom database path (default: ~/.local/share/rabbithole/rabbithole.db)")
+	flag.StringVar(&cfg.ManagementURL, "management-url", "", "RabbitMQ Management API URL (default: derived from AMQP URL)")
 	flag.Parse()
 
 	if cfg.ShowVersion {

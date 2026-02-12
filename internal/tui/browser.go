@@ -101,7 +101,7 @@ func newBrowserModel(cfg Config) browserModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
 
-	mgmt, _ := rabbitmq.NewManagementClient(cfg.RabbitMQURL)
+	mgmt, _ := rabbitmq.NewManagementClient(cfg.RabbitMQURL, cfg.ManagementURL)
 
 	return browserModel{
 		config:          cfg,

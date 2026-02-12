@@ -46,9 +46,11 @@ type Binding struct {
 	VHost           string `json:"vhost"`
 }
 
-// NewManagementClient creates a client from an AMQP URL
-// It converts amqp://user:pass@host:5672/ to http://host:15672/api
-func NewManagementClient(amqpURL string) (*ManagementClient, error) {
+// NewManagementClient creates a client from an AMQP URL.
+// If managementURL is non-empty, it is used as-is for the API base URL.
+// Otherwise, the management URL is derived from the AMQP URL (default port 15672,
+// HTTPS if the AMQP scheme is amqps).
+func NewManagementClient(amqpURL string, managementURL string) (*ManagementClient, error) {
 	parsed, err := url.Parse(amqpURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid AMQP URL: %w", err)
@@ -63,13 +65,20 @@ func NewManagementClient(amqpURL string) (*ManagementClient, error) {
 		}
 	}
 
-	host := parsed.Hostname()
-	if host == "" {
-		host = "localhost"
-	}
+	baseURL := managementURL
+	if baseURL == "" {
+		host := parsed.Hostname()
+		if host == "" {
+			host = "localhost"
+		}
 
-	// Management API is typically on port 15672
-	baseURL := fmt.Sprintf("http://%s:15672/api", host)
+		scheme := "http"
+		if parsed.Scheme == "amqps" {
+			scheme = "https"
+		}
+
+		baseURL = fmt.Sprintf("%s://%s:15672/api", scheme, host)
+	}
 
 	return &ManagementClient{
 		baseURL:  baseURL,

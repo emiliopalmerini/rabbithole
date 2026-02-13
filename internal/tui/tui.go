@@ -59,6 +59,9 @@ func Run(cfg Config) error {
 	return nil
 }
 
+// connectionLostMsg is sent when the consumer channel closes unexpectedly during consumption
+type connectionLostMsg struct{}
+
 // retryMsg is sent when a connection attempt fails and should be retried after a delay
 type retryMsg struct {
 	attempt int
@@ -209,7 +212,7 @@ func (m model) waitForMessage() tea.Cmd {
 		}
 		msg, ok := <-m.msgChan
 		if !ok {
-			return nil
+			return connectionLostMsg{}
 		}
 		return msgReceived{msg: msg}
 	}

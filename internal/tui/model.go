@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -69,7 +70,8 @@ type model struct {
 	showHelp     bool
 	timestampRel bool
 
-	// New messages indicator (when paused)
+	// Pause buffer (messages received while paused)
+	pauseBuffer []Message
 	newMsgCount int
 
 	// Components
@@ -268,10 +270,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pause_toggle":
 			m.paused = !m.paused
 			if !m.paused {
+				// Merge buffered messages into the main list
+				for _, buffered := range m.pauseBuffer {
+					m.messageCount++
+					buffered.ID = m.messageCount
+					m.messages = append(m.messages, buffered)
+					if len(m.messages) > 1000 {
+						newBookmarks := make(map[int]bool)
+						for id := range m.bookmarks {
+							if id > 1 {
+								newBookmarks[id-1] = true
+							}
+						}
+						m.bookmarks = newBookmarks
+						m.messages = m.messages[1:]
+						if m.selectedIdx > 0 {
+							m.selectedIdx--
+						}
+					}
+				}
+				m.pauseBuffer = m.pauseBuffer[:0]
 				m.newMsgCount = 0
 			}
 		case "clear":
 			m.messages = m.messages[:0]
+			m.pauseBuffer = m.pauseBuffer[:0]
 			m.selectedIdx = 0
 			m.messageCount = 0
 			m.bookmarks = make(map[int]bool)
@@ -318,6 +341,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, m.waitForMessage())
 
+	case connectionLostMsg:
+		m.cleanup()
+		m.connState = stateConnecting
+		m.connError = nil
+		cmds = append(cmds, m.spinner.Tick, scheduleRetry(0, initialBackoff))
+
 	case connectionErrorMsg:
 		m.connState = stateDisconnected
 		m.connError = msg.err
@@ -333,6 +362,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgReceived:
 		if m.paused {
 			m.newMsgCount++
+			msg.msg.ID = m.messageCount + m.newMsgCount
+			m.pauseBuffer = append(m.pauseBuffer, msg.msg)
+			// Cap pause buffer at 1000
+			if len(m.pauseBuffer) > 1000 {
+				m.pauseBuffer = m.pauseBuffer[1:]
+			}
 		} else {
 			m.messageCount++
 			msg.msg.ID = m.messageCount
@@ -558,12 +593,27 @@ func (m *model) exportMessages() tea.Cmd {
 		}
 	}
 
-	filename := fmt.Sprintf("rabbithole-export-%s.json", time.Now().Format("20060102-150405"))
-	data, _ := json.MarshalIndent(exports, "", "  ")
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	data, err := json.MarshalIndent(exports, "", "  ")
+	if err != nil {
 		return m.setStatusMsg("Export failed: " + err.Error())
 	}
-	return m.setStatusMsg(fmt.Sprintf("Exported to %s", filename))
+
+	// Write to XDG data directory
+	dataDir, err := db.DefaultDataDir()
+	if err != nil {
+		return m.setStatusMsg("Export failed: " + err.Error())
+	}
+	exportDir := filepath.Join(dataDir, "exports")
+	if err := os.MkdirAll(exportDir, 0755); err != nil {
+		return m.setStatusMsg("Export failed: " + err.Error())
+	}
+
+	filename := fmt.Sprintf("rabbithole-export-%s.json", time.Now().Format("20060102-150405"))
+	exportPath := filepath.Join(exportDir, filename)
+	if err := os.WriteFile(exportPath, data, 0644); err != nil {
+		return m.setStatusMsg("Export failed: " + err.Error())
+	}
+	return m.setStatusMsg(fmt.Sprintf("Exported to %s", exportPath))
 }
 
 func (m *model) setStatusMsg(msg string) tea.Cmd {

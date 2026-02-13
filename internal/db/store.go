@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // Store defines the interface for message persistence
 type Store interface {
@@ -55,7 +59,7 @@ type SQLiteStore struct {
 func NewStore(customPath string) (*SQLiteStore, error) {
 	dbPath := customPath
 	if dbPath == "" {
-		dataDir, err := defaultDataDir()
+		dataDir, err := DefaultDataDir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get data directory: %w", err)
 		}
@@ -86,7 +90,8 @@ func NewStore(customPath string) (*SQLiteStore, error) {
 	}, nil
 }
 
-func defaultDataDir() (string, error) {
+// DefaultDataDir returns the application data directory following XDG spec.
+func DefaultDataDir() (string, error) {
 	// Use XDG_DATA_HOME or fall back to ~/.local/share
 	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
 		return filepath.Join(xdgData, "rabbithole"), nil
@@ -99,65 +104,9 @@ func defaultDataDir() (string, error) {
 }
 
 func initSchema(db *sql.DB) error {
-	schema := `
-CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ended_at DATETIME,
-    exchange TEXT NOT NULL,
-    routing_key TEXT NOT NULL,
-    queue_name TEXT NOT NULL,
-    amqp_url TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    exchange TEXT NOT NULL,
-    routing_key TEXT NOT NULL,
-    body BLOB NOT NULL,
-    content_type TEXT,
-    headers TEXT,
-    timestamp DATETIME,
-    consumed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    proto_type TEXT,
-    correlation_id TEXT,
-    reply_to TEXT,
-    message_id TEXT,
-    app_id TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_messages_routing_key ON messages(routing_key);
-`
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schemaSQL); err != nil {
 		return err
 	}
-
-	// Create FTS5 table separately (may already exist)
-	fts := `
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    body_text, routing_key, content=messages, content_rowid=id
-);
-`
-	if _, err := db.Exec(fts); err != nil {
-		return err
-	}
-
-	// Create triggers for FTS sync
-	triggers := `
-CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, body_text, routing_key)
-    VALUES (NEW.id, CAST(NEW.body AS TEXT), NEW.routing_key);
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, body_text, routing_key)
-    VALUES ('delete', OLD.id, CAST(OLD.body AS TEXT), OLD.routing_key);
-END;
-`
-	_, _ = db.Exec(triggers) // Ignore errors if triggers already exist
-
 	return nil
 }
 

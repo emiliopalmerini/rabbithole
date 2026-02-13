@@ -125,7 +125,7 @@ func initialModel(cfg Config, store db.Store) model {
 	return model{
 		config:         cfg,
 		store:          store,
-		messages:       make([]Message, 0, 1000),
+		messages:       make([]Message, 0, cfg.MessageLimit()),
 		connState:      stateConnecting,
 		viewport:       viewport.New(80, 20),
 		detailViewport: viewport.New(80, 20),
@@ -283,7 +283,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.messageCount++
 					buffered.ID = m.messageCount
 					m.messages = append(m.messages, buffered)
-					if len(m.messages) > 1000 {
+					if len(m.messages) > m.config.MessageLimit() {
 						newBookmarks := make(map[int]bool)
 						for id := range m.bookmarks {
 							if id > 1 {
@@ -372,16 +372,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.newMsgCount++
 			msg.msg.ID = m.messageCount + m.newMsgCount
 			m.pauseBuffer = append(m.pauseBuffer, msg.msg)
-			// Cap pause buffer at 1000
-			if len(m.pauseBuffer) > 1000 {
+			// Cap pause buffer
+			if len(m.pauseBuffer) > m.config.MessageLimit() {
 				m.pauseBuffer = m.pauseBuffer[1:]
 			}
 		} else {
 			m.messageCount++
 			msg.msg.ID = m.messageCount
 			m.messages = append(m.messages, msg.msg)
-			// Keep max 1000 messages
-			if len(m.messages) > 1000 {
+			// Keep max messages
+			if len(m.messages) > m.config.MessageLimit() {
 				// Update bookmarks when removing old messages
 				newBookmarks := make(map[int]bool)
 				for id := range m.bookmarks {

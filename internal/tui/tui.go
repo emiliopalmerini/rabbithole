@@ -116,7 +116,7 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 			// Load messages from last session on this exchange
 			lastSession, err := m.store.GetLastSessionByExchange(ctx, m.config.Exchange)
 			if err == nil && lastSession != nil {
-				dbMsgs, err := m.store.ListMessagesBySessionAsc(ctx, lastSession.ID, 1000, 0)
+				dbMsgs, err := m.store.ListMessagesBySessionAsc(ctx, lastSession.ID, int64(m.config.MessageLimit()), 0)
 				if err == nil {
 					historicalMsgs = convertDBMessages(dbMsgs, m.config.Decoder)
 				}

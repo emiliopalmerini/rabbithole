@@ -16,6 +16,7 @@ type Config struct {
 	AutoPauseOnSelect bool    // Pause when user navigates
 	DefaultSplitRatio float64 // Initial split ratio (0.5 = 50/50)
 	CompactMode       bool    // Show only routing key, no timestamp
+	MaxMessages       int     // Maximum in-memory messages (0 = default 1000)
 
 	// Management API options
 	ManagementURL string // Override management API URL (empty = derive from AMQP URL)
@@ -25,9 +26,20 @@ type Config struct {
 	DBPath            string // Custom database path (empty = default)
 }
 
+const defaultMaxMessages = 1000
+
 // DefaultConfig returns a Config with sensible defaults
 func DefaultConfig() Config {
 	return Config{
 		DefaultSplitRatio: 0.5,
+		MaxMessages:       defaultMaxMessages,
 	}
+}
+
+// MessageLimit returns MaxMessages, falling back to the default if unset.
+func (c Config) MessageLimit() int {
+	if c.MaxMessages <= 0 {
+		return defaultMaxMessages
+	}
+	return c.MaxMessages
 }

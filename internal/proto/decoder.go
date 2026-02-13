@@ -2,11 +2,11 @@ package proto
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/bufbuild/protocompile"
 	"golang.org/x/text/cases"
@@ -259,11 +259,7 @@ func convertSingularValue(fd protoreflect.FieldDescriptor, v protoreflect.Value)
 		})
 		return result
 	case protoreflect.BytesKind:
-		b := v.Bytes()
-		if isPrintableText(b) {
-			return string(b)
-		}
-		return fmt.Sprintf("0x%x", b)
+		return base64.StdEncoding.EncodeToString(v.Bytes())
 	case protoreflect.EnumKind:
 		return int32(v.Enum())
 	case protoreflect.BoolKind:
@@ -285,14 +281,3 @@ func convertSingularValue(fd protoreflect.FieldDescriptor, v protoreflect.Value)
 	}
 }
 
-func isPrintableText(data []byte) bool {
-	if !utf8.Valid(data) {
-		return false
-	}
-	for _, b := range data {
-		if b < 32 && b != '\n' && b != '\r' && b != '\t' {
-			return false
-		}
-	}
-	return true
-}

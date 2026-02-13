@@ -99,33 +99,6 @@ func TestFormatRelativeTime(t *testing.T) {
 	}
 }
 
-func TestFormatHeaderValue(t *testing.T) {
-	tests := []struct {
-		name  string
-		input any
-		want  string
-	}{
-		{"string", "hello", "hello"},
-		{"int", 42, "42"},
-		{"int64", int64(99), "99"},
-		{"float64", 3.14, "3.14"},
-		{"bool true", true, "true"},
-		{"bool false", false, "false"},
-		{"nil", nil, "null"},
-		{"map", map[string]any{"k": "v"}, `{"k":"v"}`},
-		{"slice", []string{"a", "b"}, `["a","b"]`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatHeaderValue(tt.input)
-			if got != tt.want {
-				t.Errorf("formatHeaderValue(%v) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestMoveBy(t *testing.T) {
 	makeModel := func(numMsgs int, selectedIdx int) model {
 		msgs := make([]Message, numMsgs)

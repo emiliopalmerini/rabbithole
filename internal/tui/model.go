@@ -785,11 +785,12 @@ func (m *model) yankTab() tea.Cmd {
 			return m.setStatusMsg("Copy failed: " + err.Error())
 		}
 		return m.setStatusMsg("Copied headers")
-	case 2: // Metadata → routing key
-		if err := clipboard.WriteAll(msg.RoutingKey); err != nil {
+	case 2: // Metadata
+		content, _ := json.MarshalIndent(metadataMap(msg), "", "  ")
+		if err := clipboard.WriteAll(string(content)); err != nil {
 			return m.setStatusMsg("Copy failed: " + err.Error())
 		}
-		return m.setStatusMsg("Copied routing key")
+		return m.setStatusMsg("Copied metadata")
 	case 3: // Dead Letter
 		lines := renderDLXTab(msg)
 		content := strings.Join(lines, "\n")
@@ -1288,47 +1289,43 @@ func (m model) renderDetailTabBar() string {
 	return strings.Join(parts, mutedStyle.Render("│"))
 }
 
-func (m model) renderMetadataTab(msg Message) []string {
-	var lines []string
-	lines = append(lines, fieldNameStyle.Render("Routing Key: ")+msg.RoutingKey)
-	lines = append(lines, fieldNameStyle.Render("Exchange: ")+msg.Exchange)
-	lines = append(lines, fieldNameStyle.Render("Timestamp: ")+msg.Timestamp.Format(time.RFC3339))
-	lines = append(lines, fieldNameStyle.Render("Size: ")+fmt.Sprintf("%d bytes", len(msg.RawBody)))
+func metadataMap(msg Message) map[string]any {
+	meta := map[string]any{
+		"routing_key": msg.RoutingKey,
+		"exchange":    msg.Exchange,
+		"timestamp":   msg.Timestamp.Format(time.RFC3339),
+		"size":        fmt.Sprintf("%d bytes", len(msg.RawBody)),
+	}
 	if msg.ContentType != "" {
-		lines = append(lines, fieldNameStyle.Render("Content-Type: ")+msg.ContentType)
+		meta["content_type"] = msg.ContentType
 	}
 	if msg.ProtoType != "" {
-		lines = append(lines, fieldNameStyle.Render("Proto Type: ")+msg.ProtoType)
+		meta["proto_type"] = msg.ProtoType
 	}
 	if msg.CorrelationID != "" {
-		lines = append(lines, fieldNameStyle.Render("Correlation ID: ")+msg.CorrelationID)
+		meta["correlation_id"] = msg.CorrelationID
 	}
 	if msg.MessageID != "" {
-		lines = append(lines, fieldNameStyle.Render("Message ID: ")+msg.MessageID)
+		meta["message_id"] = msg.MessageID
 	}
 	if msg.AppID != "" {
-		lines = append(lines, fieldNameStyle.Render("App ID: ")+msg.AppID)
+		meta["app_id"] = msg.AppID
 	}
 	if msg.ReplyTo != "" {
-		lines = append(lines, fieldNameStyle.Render("Reply To: ")+msg.ReplyTo)
+		meta["reply_to"] = msg.ReplyTo
 	}
-	return lines
+	return meta
+}
+
+func (m model) renderMetadataTab(msg Message) []string {
+	return []string{formatJSONSyntax(metadataMap(msg))}
 }
 
 func (m model) renderHeadersTab(msg Message, innerWidth int) []string {
 	if len(msg.Headers) == 0 {
 		return []string{mutedStyle.Render("No headers")}
 	}
-	headerKeys := make([]string, 0, len(msg.Headers))
-	for k := range msg.Headers {
-		headerKeys = append(headerKeys, k)
-	}
-	sort.Strings(headerKeys)
-	var lines []string
-	for _, k := range headerKeys {
-		lines = append(lines, fmt.Sprintf("%s: %s", fieldNameStyle.Render(k), formatHeaderValue(msg.Headers[k])))
-	}
-	return lines
+	return []string{formatJSONSyntax(msg.Headers)}
 }
 
 func (m model) renderBodyTab(msg Message) []string {
@@ -1521,24 +1518,6 @@ func formatRelativeTime(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
-}
-
-// formatHeaderValue formats a header value as JSON for complex types, or as a simple string for primitives
-func formatHeaderValue(v any) string {
-	switch val := v.(type) {
-	case string:
-		return val
-	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return fmt.Sprintf("%v", val)
-	case nil:
-		return "null"
-	default:
-		// For maps, slices, and other complex types, marshal as JSON
-		if jsonBytes, err := json.Marshal(val); err == nil {
-			return string(jsonBytes)
-		}
-		return fmt.Sprintf("%v", val)
-	}
 }
 
 // formatJSONSyntax formats JSON with syntax highlighting

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -466,12 +467,23 @@ func (m *model) performSearch() {
 		return
 	}
 
-	// Parse field prefix (e.g. "rk:country", "body:alice", "hdr:trace")
+	// Parse field prefix (e.g. "rk:country", "body:alice", "re:pattern")
 	field, query := parseSearchQuery(m.searchQuery)
-	query = strings.ToLower(query)
+
+	var re *regexp.Regexp
+	if field == "re" {
+		var err error
+		re, err = compileSearchRegex(query)
+		if err != nil {
+			m.setStatusMsg("Invalid regex: " + err.Error())
+			return
+		}
+	} else {
+		query = strings.ToLower(query)
+	}
 
 	for i, msg := range m.messages {
-		if matchesSearch(msg, field, query) {
+		if matchesSearch(msg, field, query, re) {
 			m.searchResults = append(m.searchResults, i)
 		}
 	}
@@ -484,10 +496,10 @@ func (m *model) performSearch() {
 }
 
 // parseSearchQuery extracts an optional field prefix from a search query.
-// Supported prefixes: rk:, body:, ex:, hdr:, type:
+// Supported prefixes: rk:, body:, ex:, hdr:, type:, re:
 // Returns ("", query) for unprefixed queries.
 func parseSearchQuery(q string) (field, query string) {
-	for _, prefix := range []string{"rk:", "body:", "ex:", "hdr:", "type:"} {
+	for _, prefix := range []string{"rk:", "body:", "ex:", "hdr:", "type:", "re:"} {
 		if strings.HasPrefix(q, prefix) {
 			return prefix[:len(prefix)-1], q[len(prefix):]
 		}
@@ -495,8 +507,25 @@ func parseSearchQuery(q string) (field, query string) {
 	return "", q
 }
 
-func matchesSearch(msg Message, field, query string) bool {
+// compileSearchRegex compiles a regex pattern for search.
+func compileSearchRegex(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile(pattern)
+}
+
+func matchesSearch(msg Message, field, query string, re *regexp.Regexp) bool {
 	switch field {
+	case "re":
+		if re == nil {
+			return false
+		}
+		if re.MatchString(msg.RoutingKey) {
+			return true
+		}
+		if msg.Decoded != nil {
+			bodyJSON, _ := json.Marshal(msg.Decoded)
+			return re.Match(bodyJSON)
+		}
+		return false
 	case "rk":
 		return strings.Contains(strings.ToLower(msg.RoutingKey), query)
 	case "body":
@@ -1109,7 +1138,7 @@ func (m model) renderHelpOverlay() string {
 		{
 			name: "Search",
 			keys: []struct{ key, desc string }{
-				{"/", "Start search"},
+				{"/", "Start search (prefix: rk: body: ex: hdr: type: re:)"},
 				{"n / N", "Next / previous result"},
 				{"Esc", "Clear search"},
 			},

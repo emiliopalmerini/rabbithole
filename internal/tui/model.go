@@ -72,6 +72,7 @@ type model struct {
 	compactMode  bool
 	showHelp     bool
 	timestampRel bool
+	detailTab    int // 0=metadata, 1=headers, 2=body
 
 	// Pause buffer (messages received while paused)
 	pauseBuffer []Message
@@ -207,6 +208,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.detailViewport.YOffset > 0 {
 				m.detailViewport.YOffset--
 			}
+			return m, nil
+		case "tab":
+			m.detailTab = (m.detailTab + 1) % 3
+			m.detailViewport.YOffset = 0
+			return m, nil
+		case "shift+tab":
+			m.detailTab = (m.detailTab + 2) % 3
+			m.detailViewport.YOffset = 0
 			return m, nil
 		case "up":
 			m.moveBy(-1)
@@ -891,8 +900,8 @@ func (m model) renderMessageList(width, height int) string {
 }
 
 func (m model) renderDetailPanel(width, height int) string {
-	// Account for border (2 lines)
-	innerHeight := height - 2
+	// Account for border (2 lines) and tab bar (1 line + divider)
+	innerHeight := height - 4
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
@@ -905,64 +914,19 @@ func (m model) renderDetailPanel(width, height int) string {
 
 	msg := m.messages[m.selectedIdx]
 	innerWidth := width - 4
+
+	// Tab bar
+	tabBar := m.renderDetailTabBar()
+
+	// Render active tab content
 	var lines []string
-
-	// METADATA section
-	lines = append(lines, fieldNameStyle.Render("METADATA"))
-	lines = append(lines, dividerStyle.Render(strings.Repeat("─", innerWidth)))
-	lines = append(lines, fieldNameStyle.Render("Routing Key: ")+msg.RoutingKey)
-	lines = append(lines, fieldNameStyle.Render("Exchange: ")+msg.Exchange)
-	lines = append(lines, fieldNameStyle.Render("Timestamp: ")+msg.Timestamp.Format(time.RFC3339))
-	lines = append(lines, fieldNameStyle.Render("Size: ")+fmt.Sprintf("%d bytes", len(msg.RawBody)))
-	if msg.ContentType != "" {
-		lines = append(lines, fieldNameStyle.Render("Content-Type: ")+msg.ContentType)
-	}
-	if msg.ProtoType != "" {
-		lines = append(lines, fieldNameStyle.Render("Proto Type: ")+msg.ProtoType)
-	}
-	if msg.CorrelationID != "" {
-		lines = append(lines, fieldNameStyle.Render("Correlation ID: ")+msg.CorrelationID)
-	}
-	if msg.MessageID != "" {
-		lines = append(lines, fieldNameStyle.Render("Message ID: ")+msg.MessageID)
-	}
-	if msg.AppID != "" {
-		lines = append(lines, fieldNameStyle.Render("App ID: ")+msg.AppID)
-	}
-	if msg.ReplyTo != "" {
-		lines = append(lines, fieldNameStyle.Render("Reply To: ")+msg.ReplyTo)
-	}
-	lines = append(lines, "")
-
-	// HEADERS section
-	if len(msg.Headers) > 0 {
-		lines = append(lines, fieldNameStyle.Render("HEADERS"))
-		lines = append(lines, dividerStyle.Render(strings.Repeat("─", innerWidth)))
-		// Sort header keys for stable output
-		headerKeys := make([]string, 0, len(msg.Headers))
-		for k := range msg.Headers {
-			headerKeys = append(headerKeys, k)
-		}
-		sort.Strings(headerKeys)
-		for _, k := range headerKeys {
-			lines = append(lines, fmt.Sprintf("%s: %s", fieldNameStyle.Render(k), formatHeaderValue(msg.Headers[k])))
-		}
-		lines = append(lines, "")
-	}
-
-	// BODY section
-	lines = append(lines, fieldNameStyle.Render("BODY"))
-	lines = append(lines, dividerStyle.Render(strings.Repeat("─", innerWidth)))
-
-	if m.showRaw {
-		lines = append(lines, formatHex(msg.RawBody))
-	} else if msg.DecodeErr != nil {
-		lines = append(lines, errorStyle.Render(fmt.Sprintf("Decode error: %v", msg.DecodeErr)))
-		lines = append(lines, formatHex(msg.RawBody))
-	} else if msg.Decoded != nil {
-		lines = append(lines, formatJSONSyntax(msg.Decoded))
-	} else {
-		lines = append(lines, formatHex(msg.RawBody))
+	switch m.detailTab {
+	case 0:
+		lines = m.renderMetadataTab(msg)
+	case 1:
+		lines = m.renderHeadersTab(msg, innerWidth)
+	case 2:
+		lines = m.renderBodyTab(msg)
 	}
 
 	// Split into individual lines for scrolling
@@ -993,8 +957,80 @@ func (m model) renderDetailPanel(width, height int) string {
 		visibleLines = append(visibleLines, "")
 	}
 
-	content := strings.Join(visibleLines, "\n")
+	content := tabBar + "\n" + strings.Join(visibleLines, "\n")
 	return detailPanelStyle.Width(width).Height(height).Render(content)
+}
+
+func (m model) renderDetailTabBar() string {
+	tabs := []string{"Metadata", "Headers", "Body"}
+	var parts []string
+	for i, name := range tabs {
+		if i == m.detailTab {
+			parts = append(parts, selectedMessageStyle.Render(" "+name+" "))
+		} else {
+			parts = append(parts, mutedStyle.Render(" "+name+" "))
+		}
+	}
+	return strings.Join(parts, mutedStyle.Render("│"))
+}
+
+func (m model) renderMetadataTab(msg Message) []string {
+	var lines []string
+	lines = append(lines, fieldNameStyle.Render("Routing Key: ")+msg.RoutingKey)
+	lines = append(lines, fieldNameStyle.Render("Exchange: ")+msg.Exchange)
+	lines = append(lines, fieldNameStyle.Render("Timestamp: ")+msg.Timestamp.Format(time.RFC3339))
+	lines = append(lines, fieldNameStyle.Render("Size: ")+fmt.Sprintf("%d bytes", len(msg.RawBody)))
+	if msg.ContentType != "" {
+		lines = append(lines, fieldNameStyle.Render("Content-Type: ")+msg.ContentType)
+	}
+	if msg.ProtoType != "" {
+		lines = append(lines, fieldNameStyle.Render("Proto Type: ")+msg.ProtoType)
+	}
+	if msg.CorrelationID != "" {
+		lines = append(lines, fieldNameStyle.Render("Correlation ID: ")+msg.CorrelationID)
+	}
+	if msg.MessageID != "" {
+		lines = append(lines, fieldNameStyle.Render("Message ID: ")+msg.MessageID)
+	}
+	if msg.AppID != "" {
+		lines = append(lines, fieldNameStyle.Render("App ID: ")+msg.AppID)
+	}
+	if msg.ReplyTo != "" {
+		lines = append(lines, fieldNameStyle.Render("Reply To: ")+msg.ReplyTo)
+	}
+	return lines
+}
+
+func (m model) renderHeadersTab(msg Message, innerWidth int) []string {
+	if len(msg.Headers) == 0 {
+		return []string{mutedStyle.Render("No headers")}
+	}
+	headerKeys := make([]string, 0, len(msg.Headers))
+	for k := range msg.Headers {
+		headerKeys = append(headerKeys, k)
+	}
+	sort.Strings(headerKeys)
+	var lines []string
+	for _, k := range headerKeys {
+		lines = append(lines, fmt.Sprintf("%s: %s", fieldNameStyle.Render(k), formatHeaderValue(msg.Headers[k])))
+	}
+	return lines
+}
+
+func (m model) renderBodyTab(msg Message) []string {
+	if m.showRaw {
+		return []string{formatHex(msg.RawBody)}
+	}
+	if msg.DecodeErr != nil {
+		return []string{
+			errorStyle.Render(fmt.Sprintf("Decode error: %v", msg.DecodeErr)),
+			formatHex(msg.RawBody),
+		}
+	}
+	if msg.Decoded != nil {
+		return []string{formatJSONSyntax(msg.Decoded)}
+	}
+	return []string{formatHex(msg.RawBody)}
 }
 
 func (m model) renderSearchBar() string {
@@ -1008,6 +1044,7 @@ func (m model) renderHelpBar() string {
 		{"/", "search"},
 		{"y/Y", "copy"},
 		{"m", "mark"},
+		{"tab", "section"},
 		{"r", "raw"},
 		{"p", "pause"},
 		{"?", "help"},
@@ -1066,6 +1103,7 @@ func (m model) renderHelpOverlay() string {
 		{
 			name: "View",
 			keys: []struct{ key, desc string }{
+				{"Tab / S-Tab", "Switch detail section"},
 				{"r", "Toggle raw/decoded view"},
 				{"t", "Toggle compact mode"},
 				{"T", "Toggle timestamp format"},

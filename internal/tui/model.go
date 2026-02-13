@@ -862,6 +862,24 @@ func (m model) renderDetailPanel(width, height int) string {
 	lines = append(lines, fieldNameStyle.Render("Exchange: ")+msg.Exchange)
 	lines = append(lines, fieldNameStyle.Render("Timestamp: ")+msg.Timestamp.Format(time.RFC3339))
 	lines = append(lines, fieldNameStyle.Render("Size: ")+fmt.Sprintf("%d bytes", len(msg.RawBody)))
+	if msg.ContentType != "" {
+		lines = append(lines, fieldNameStyle.Render("Content-Type: ")+msg.ContentType)
+	}
+	if msg.ProtoType != "" {
+		lines = append(lines, fieldNameStyle.Render("Proto Type: ")+msg.ProtoType)
+	}
+	if msg.CorrelationID != "" {
+		lines = append(lines, fieldNameStyle.Render("Correlation ID: ")+msg.CorrelationID)
+	}
+	if msg.MessageID != "" {
+		lines = append(lines, fieldNameStyle.Render("Message ID: ")+msg.MessageID)
+	}
+	if msg.AppID != "" {
+		lines = append(lines, fieldNameStyle.Render("App ID: ")+msg.AppID)
+	}
+	if msg.ReplyTo != "" {
+		lines = append(lines, fieldNameStyle.Render("Reply To: ")+msg.ReplyTo)
+	}
 	lines = append(lines, "")
 
 	// HEADERS section

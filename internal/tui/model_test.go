@@ -256,4 +256,92 @@ func TestPerformSearch(t *testing.T) {
 			t.Errorf("expected 2 results for case-insensitive search, got %d", len(m.searchResults))
 		}
 	})
+
+	t.Run("field prefix rk: searches routing key only", func(t *testing.T) {
+		m := makeModel()
+		// "order" appears in routing keys and body; rk: should only match routing keys
+		m.searchQuery = "rk:order"
+		m.performSearch()
+		if len(m.searchResults) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(m.searchResults))
+		}
+		// Should NOT match body content
+		m.searchQuery = "rk:alice"
+		m.performSearch()
+		if len(m.searchResults) != 0 {
+			t.Errorf("expected 0 results for rk:alice, got %d", len(m.searchResults))
+		}
+	})
+
+	t.Run("field prefix body: searches body only", func(t *testing.T) {
+		m := makeModel()
+		m.searchQuery = "body:alice"
+		m.performSearch()
+		if len(m.searchResults) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(m.searchResults))
+		}
+		if m.searchResults[0] != 1 {
+			t.Errorf("searchResults = %v, want [1]", m.searchResults)
+		}
+		// "order" appears in routing keys but also in body ("status":"new"/"shipped")
+		m.searchQuery = "body:order"
+		m.performSearch()
+		if len(m.searchResults) != 0 {
+			t.Errorf("expected 0 results for body:order (not in body), got %d", len(m.searchResults))
+		}
+	})
+
+	t.Run("field prefix ex: searches exchange only", func(t *testing.T) {
+		m := model{
+			messages: []Message{
+				{ID: 1, Exchange: "events", RoutingKey: "order.created"},
+				{ID: 2, Exchange: "commands", RoutingKey: "user.updated"},
+			},
+			detailViewport: viewport.New(80, 20),
+		}
+		m.searchQuery = "ex:events"
+		m.performSearch()
+		if len(m.searchResults) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(m.searchResults))
+		}
+		if m.searchResults[0] != 0 {
+			t.Errorf("searchResults = %v, want [0]", m.searchResults)
+		}
+	})
+
+	t.Run("field prefix hdr: searches headers", func(t *testing.T) {
+		m := model{
+			messages: []Message{
+				{ID: 1, RoutingKey: "a", Headers: map[string]any{"x-trace-id": "abc123"}},
+				{ID: 2, RoutingKey: "b", Headers: map[string]any{"x-source": "web"}},
+			},
+			detailViewport: viewport.New(80, 20),
+		}
+		m.searchQuery = "hdr:abc123"
+		m.performSearch()
+		if len(m.searchResults) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(m.searchResults))
+		}
+		if m.searchResults[0] != 0 {
+			t.Errorf("searchResults = %v, want [0]", m.searchResults)
+		}
+	})
+
+	t.Run("field prefix type: searches proto type", func(t *testing.T) {
+		m := model{
+			messages: []Message{
+				{ID: 1, RoutingKey: "a", ProtoType: "CountryUpdated"},
+				{ID: 2, RoutingKey: "b", ProtoType: "UserCreated"},
+			},
+			detailViewport: viewport.New(80, 20),
+		}
+		m.searchQuery = "type:country"
+		m.performSearch()
+		if len(m.searchResults) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(m.searchResults))
+		}
+		if m.searchResults[0] != 0 {
+			t.Errorf("searchResults = %v, want [0]", m.searchResults)
+		}
+	})
 }

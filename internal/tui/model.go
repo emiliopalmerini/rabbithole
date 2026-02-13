@@ -456,19 +456,13 @@ func (m *model) performSearch() {
 		return
 	}
 
-	query := strings.ToLower(m.searchQuery)
+	// Parse field prefix (e.g. "rk:country", "body:alice", "hdr:trace")
+	field, query := parseSearchQuery(m.searchQuery)
+	query = strings.ToLower(query)
+
 	for i, msg := range m.messages {
-		// Search in routing key
-		if strings.Contains(strings.ToLower(msg.RoutingKey), query) {
+		if matchesSearch(msg, field, query) {
 			m.searchResults = append(m.searchResults, i)
-			continue
-		}
-		// Search in decoded body
-		if msg.Decoded != nil {
-			bodyJSON, _ := json.Marshal(msg.Decoded)
-			if strings.Contains(strings.ToLower(string(bodyJSON)), query) {
-				m.searchResults = append(m.searchResults, i)
-			}
 		}
 	}
 
@@ -476,6 +470,51 @@ func (m *model) performSearch() {
 	if len(m.searchResults) > 0 {
 		m.selectedIdx = m.searchResults[0]
 		m.detailViewport.YOffset = 0
+	}
+}
+
+// parseSearchQuery extracts an optional field prefix from a search query.
+// Supported prefixes: rk:, body:, ex:, hdr:, type:
+// Returns ("", query) for unprefixed queries.
+func parseSearchQuery(q string) (field, query string) {
+	for _, prefix := range []string{"rk:", "body:", "ex:", "hdr:", "type:"} {
+		if strings.HasPrefix(q, prefix) {
+			return prefix[:len(prefix)-1], q[len(prefix):]
+		}
+	}
+	return "", q
+}
+
+func matchesSearch(msg Message, field, query string) bool {
+	switch field {
+	case "rk":
+		return strings.Contains(strings.ToLower(msg.RoutingKey), query)
+	case "body":
+		if msg.Decoded != nil {
+			bodyJSON, _ := json.Marshal(msg.Decoded)
+			return strings.Contains(strings.ToLower(string(bodyJSON)), query)
+		}
+		return false
+	case "ex":
+		return strings.Contains(strings.ToLower(msg.Exchange), query)
+	case "hdr":
+		if len(msg.Headers) > 0 {
+			hdrJSON, _ := json.Marshal(msg.Headers)
+			return strings.Contains(strings.ToLower(string(hdrJSON)), query)
+		}
+		return false
+	case "type":
+		return strings.Contains(strings.ToLower(msg.ProtoType), query)
+	default:
+		// Unprefixed: search routing key + body (original behavior)
+		if strings.Contains(strings.ToLower(msg.RoutingKey), query) {
+			return true
+		}
+		if msg.Decoded != nil {
+			bodyJSON, _ := json.Marshal(msg.Decoded)
+			return strings.Contains(strings.ToLower(string(bodyJSON)), query)
+		}
+		return false
 	}
 }
 

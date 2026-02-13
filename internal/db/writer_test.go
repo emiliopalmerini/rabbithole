@@ -49,6 +49,11 @@ func (s *mockStore) SearchMessages(context.Context, string, int64, int64) ([]Mes
 func (s *mockStore) SearchMessagesInSession(context.Context, string, int64, int64, int64) ([]Message, error) {
 	return nil, nil
 }
+func (s *mockStore) CountMessagesBySession(context.Context, int64) (int64, error) { return 0, nil }
+func (s *mockStore) DeleteSession(context.Context, int64) error                   { return nil }
+func (s *mockStore) SearchSessionsByContent(context.Context, string, int64) ([]int64, error) {
+	return nil, nil
+}
 func (s *mockStore) Close() error { return nil }
 
 func TestAsyncWriter_SaveAndClose(t *testing.T) {

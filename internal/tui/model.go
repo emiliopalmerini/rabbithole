@@ -51,6 +51,9 @@ type model struct {
 	asyncWriter *db.AsyncWriter
 	sessionID   int64
 
+	// Replay mode (read-only, no AMQP connection)
+	replayMode bool
+
 	// Vim command state
 	vimKeys VimKeyState
 
@@ -268,6 +271,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.splitRatio += 0.05
 			}
 		case "pause_toggle":
+			if m.replayMode {
+				return m, nil
+			}
 			m.paused = !m.paused
 			if !m.paused {
 				// Merge buffered messages into the main list
@@ -675,17 +681,21 @@ func (m model) View() string {
 
 func (m model) renderStatusBar() string {
 	var connStatus string
-	switch m.connState {
-	case stateConnected:
-		connStatus = connectedStyle.Render("● Connected")
-	case stateConnecting:
-		connStatus = statusBarStyle.Render(m.spinner.View() + " Connecting...")
-	default:
-		errMsg := ""
-		if m.connError != nil {
-			errMsg = fmt.Sprintf(" (%s)", m.connError.Error())
+	if m.replayMode {
+		connStatus = connectedStyle.Render("▶ Replay")
+	} else {
+		switch m.connState {
+		case stateConnected:
+			connStatus = connectedStyle.Render("● Connected")
+		case stateConnecting:
+			connStatus = statusBarStyle.Render(m.spinner.View() + " Connecting...")
+		default:
+			errMsg := ""
+			if m.connError != nil {
+				errMsg = fmt.Sprintf(" (%s)", m.connError.Error())
+			}
+			connStatus = disconnectedStyle.Render("○ Disconnected" + errMsg)
 		}
-		connStatus = disconnectedStyle.Render("○ Disconnected" + errMsg)
 	}
 
 	exchange := statusBarStyle.Render(fmt.Sprintf("Exchange: %s", m.config.Exchange))

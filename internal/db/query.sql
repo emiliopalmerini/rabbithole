@@ -52,3 +52,10 @@ WHERE session_id = ?
 ORDER BY consumed_at ASC
 LIMIT ? OFFSET ?;
 
+-- name: CountMessagesBySession :one
+SELECT COUNT(*) FROM messages WHERE session_id = ?;
+
+-- name: DeleteSession :exec
+DELETE FROM sessions WHERE id = ?;
+
+

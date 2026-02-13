@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countMessagesBySession = `-- name: CountMessagesBySession :one
+SELECT COUNT(*) FROM messages WHERE session_id = ?
+`
+
+func (q *Queries) CountMessagesBySession(ctx context.Context, sessionID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countMessagesBySession, sessionID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (exchange, routing_key, queue_name, amqp_url)
 VALUES (?, ?, ?, ?)
@@ -33,6 +44,15 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (i
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM sessions WHERE id = ?
+`
+
+func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteSession, id)
+	return err
 }
 
 const endSession = `-- name: EndSession :exec

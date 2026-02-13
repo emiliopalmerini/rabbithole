@@ -682,6 +682,7 @@ func (m browserModel) renderHelp() string {
 			{"j/k", "navigate"},
 			{"/", "filter"},
 			{"enter", "select"},
+			{"s", "sessions"},
 			{"r", "refresh"},
 			{"q", "quit"},
 		}

@@ -297,6 +297,154 @@ func TestStore_SearchMessages(t *testing.T) {
 	}
 }
 
+func TestStore_CountMessagesBySession(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	sessionID, err := store.CreateSession(ctx, "ex", "#", "q1", "amqp://localhost/")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Empty session should have 0 messages
+	count, err := store.CountMessagesBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CountMessagesBySession: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 messages, got %d", count)
+	}
+
+	// Insert 5 messages
+	for i := range 5 {
+		_, err := store.InsertMessage(ctx, &MessageRecord{
+			SessionID:  sessionID,
+			Exchange:   "ex",
+			RoutingKey: "test.key",
+			Body:       []byte("body " + string(rune('a'+i))),
+		})
+		if err != nil {
+			t.Fatalf("InsertMessage %d: %v", i, err)
+		}
+	}
+
+	count, err = store.CountMessagesBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CountMessagesBySession: %v", err)
+	}
+	if count != 5 {
+		t.Errorf("expected 5 messages, got %d", count)
+	}
+}
+
+func TestStore_DeleteSession(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	sessionID, err := store.CreateSession(ctx, "ex", "#", "q1", "amqp://localhost/")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Insert messages
+	for i := range 3 {
+		_, err := store.InsertMessage(ctx, &MessageRecord{
+			SessionID:  sessionID,
+			Exchange:   "ex",
+			RoutingKey: "test.key",
+			Body:       []byte("body"),
+		})
+		if err != nil {
+			t.Fatalf("InsertMessage %d: %v", i, err)
+		}
+	}
+
+	// Delete session
+	if err := store.DeleteSession(ctx, sessionID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	// Session should be gone
+	sessions, err := store.ListRecentSessions(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListRecentSessions: %v", err)
+	}
+	for _, s := range sessions {
+		if s.ID == sessionID {
+			t.Error("session should have been deleted")
+		}
+	}
+
+	// Messages should be gone (cascade)
+	count, err := store.CountMessagesBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("CountMessagesBySession: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 messages after cascade delete, got %d", count)
+	}
+}
+
+func TestStore_SearchSessionsByContent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	// Create two sessions with different content
+	s1, err := store.CreateSession(ctx, "ex1", "#", "q1", "amqp://localhost/")
+	if err != nil {
+		t.Fatalf("CreateSession 1: %v", err)
+	}
+	s2, err := store.CreateSession(ctx, "ex2", "#", "q2", "amqp://localhost/")
+	if err != nil {
+		t.Fatalf("CreateSession 2: %v", err)
+	}
+
+	// Session 1: order messages
+	for _, body := range []string{"new order placed", "order confirmed"} {
+		_, err := store.InsertMessage(ctx, &MessageRecord{
+			SessionID: s1, Exchange: "ex1", RoutingKey: "order.created", Body: []byte(body),
+		})
+		if err != nil {
+			t.Fatalf("InsertMessage s1: %v", err)
+		}
+	}
+
+	// Session 2: user messages
+	_, err = store.InsertMessage(ctx, &MessageRecord{
+		SessionID: s2, Exchange: "ex2", RoutingKey: "user.updated", Body: []byte("user profile changed"),
+	})
+	if err != nil {
+		t.Fatalf("InsertMessage s2: %v", err)
+	}
+
+	// Search for "order" should return session 1
+	ids, err := store.SearchSessionsByContent(ctx, "order", 100)
+	if err != nil {
+		t.Fatalf("SearchSessionsByContent: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != s1 {
+		t.Errorf("expected [%d], got %v", s1, ids)
+	}
+
+	// Search for "user" should return session 2
+	ids, err = store.SearchSessionsByContent(ctx, "user", 100)
+	if err != nil {
+		t.Fatalf("SearchSessionsByContent: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != s2 {
+		t.Errorf("expected [%d], got %v", s2, ids)
+	}
+
+	// Search for nonexistent content
+	ids, err = store.SearchSessionsByContent(ctx, "nonexistent", 100)
+	if err != nil {
+		t.Fatalf("SearchSessionsByContent: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected empty, got %v", ids)
+	}
+}
+
 func TestSanitizeFTS5Query(t *testing.T) {
 	tests := []struct {
 		input string

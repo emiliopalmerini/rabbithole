@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/epalmerini/rabbithole/internal/db"
 	"github.com/epalmerini/rabbithole/internal/proto"
@@ -243,6 +246,41 @@ func (m *model) cleanup() {
 	if m.sessionID > 0 && m.store != nil {
 		_ = m.store.EndSession(context.Background(), m.sessionID)
 		m.sessionID = 0
+	}
+}
+
+// initialReplayModel creates a consumer model pre-loaded with session messages (no AMQP).
+func initialReplayModel(cfg Config, session db.Session, dbMsgs []db.Message) model {
+	si := textinput.New()
+	si.Placeholder = "Search..."
+	si.CharLimit = 100
+	si.Width = 30
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = spinnerStyle
+
+	splitRatio := cfg.DefaultSplitRatio
+	if splitRatio == 0 {
+		splitRatio = 0.5
+	}
+
+	msgs := convertDBMessages(dbMsgs, cfg.Decoder)
+
+	return model{
+		config:         cfg,
+		replayMode:     true,
+		messages:       msgs,
+		messageCount:   len(msgs),
+		connState:      stateConnected,
+		viewport:       viewport.New(80, 20),
+		detailViewport: viewport.New(80, 20),
+		vimKeys:        NewVimKeyState(),
+		bookmarks:      make(map[int]bool),
+		splitRatio:     splitRatio,
+		compactMode:    cfg.CompactMode,
+		searchInput:    si,
+		spinner:        sp,
 	}
 }
 

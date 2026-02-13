@@ -31,6 +31,9 @@ type Store interface {
 	ListMessagesBySessionAsc(ctx context.Context, sessionID, limit, offset int64) ([]Message, error)
 	SearchMessages(ctx context.Context, query string, limit, offset int64) ([]Message, error)
 	SearchMessagesInSession(ctx context.Context, query string, sessionID, limit, offset int64) ([]Message, error)
+	CountMessagesBySession(ctx context.Context, sessionID int64) (int64, error)
+	DeleteSession(ctx context.Context, sessionID int64) error
+	SearchSessionsByContent(ctx context.Context, query string, limit int64) ([]int64, error)
 	Close() error
 }
 
@@ -252,6 +255,39 @@ func (s *SQLiteStore) scanMessages(ctx context.Context, query string, args ...an
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()
+}
+
+func (s *SQLiteStore) CountMessagesBySession(ctx context.Context, sessionID int64) (int64, error) {
+	return s.queries.CountMessagesBySession(ctx, sessionID)
+}
+
+func (s *SQLiteStore) DeleteSession(ctx context.Context, sessionID int64) error {
+	return s.queries.DeleteSession(ctx, sessionID)
+}
+
+func (s *SQLiteStore) SearchSessionsByContent(ctx context.Context, query string, limit int64) ([]int64, error) {
+	const searchQuery = `
+SELECT DISTINCT m.session_id
+FROM messages m
+JOIN messages_fts fts ON m.id = fts.rowid
+WHERE messages_fts MATCH ?
+LIMIT ?
+`
+	rows, err := s.db.QueryContext(ctx, searchQuery, sanitizeFTS5Query(query), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessionIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		sessionIDs = append(sessionIDs, id)
+	}
+	return sessionIDs, rows.Err()
 }
 
 func (s *SQLiteStore) Close() error {

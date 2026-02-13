@@ -84,6 +84,9 @@ type model struct {
 	spinner        spinner.Model
 	detailViewport viewport.Model
 
+	// Live stats
+	stats stats
+
 	// Status messages (brief confirmations)
 	statusMsg     string
 	statusMsgTime time.Time
@@ -380,6 +383,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.connectWithRetry(msg.attempt))
 
 	case msgReceived:
+		m.stats.record(time.Now(), len(msg.msg.RawBody))
 		if m.paused {
 			m.newMsgCount++
 			msg.msg.ID = m.messageCount + m.newMsgCount
@@ -933,8 +937,15 @@ func (m model) renderStatusBar() string {
 		statusMsgDisplay = "  " + confirmationStyle.Render(m.statusMsg)
 	}
 
-	return lipgloss.JoinHorizontal(
-		lipgloss.Left,
+	// Live stats (only when connected and have messages)
+	statsDisplay := ""
+	if m.stats.totalMessages > 0 && !m.replayMode {
+		rate := m.stats.msgPerSec(time.Now())
+		avg := m.stats.avgSize()
+		statsDisplay = mutedStyle.Render(fmt.Sprintf("%s  avg %s", formatRate(rate), formatBytes(avg)))
+	}
+
+	parts := []string{
 		connStatus,
 		pausedStatus,
 		searchStatus,
@@ -945,7 +956,12 @@ func (m model) renderStatusBar() string {
 		routingKey,
 		"  │  ",
 		msgCount,
-	)
+	}
+	if statsDisplay != "" {
+		parts = append(parts, "  │  ", statsDisplay)
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 }
 
 func (m model) renderMessageList(width, height int) string {

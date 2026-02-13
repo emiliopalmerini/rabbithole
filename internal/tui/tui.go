@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/epalmerini/rabbithole/internal/config"
 	"github.com/epalmerini/rabbithole/internal/db"
 	"github.com/epalmerini/rabbithole/internal/proto"
 	"github.com/epalmerini/rabbithole/internal/rabbitmq"
@@ -22,26 +24,45 @@ const (
 	initialBackoff = 1 * time.Second
 )
 
-func Run(cfg Config) error {
-	// Initialize persistence store if enabled (shared across consumer sessions)
-	var persistStore db.Store
-	if cfg.EnablePersistence {
-		var err error
-		persistStore, err = db.NewStore(cfg.DBPath)
-		if err != nil {
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer func() { _ = persistStore.Close() }()
+// Run starts the TUI application with the given file config.
+func Run(fileCfg *config.FileConfig, configDir string) error {
+	// Always init persistence
+	resolved := fileCfg.Resolve("", configDir)
+	persistStore, err := db.NewStore(resolved.DBPath)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer func() { _ = persistStore.Close() }()
+
+	// Migrate prefs.json if needed
+	if dataDir, err := db.DefaultDataDir(); err == nil {
+		_ = config.MigratePrefs(dataDir, configDir)
 	}
 
 	var m tea.Model
 
-	// If exchange is specified via CLI, go directly to consumer
-	// Otherwise, show the browser
-	if cfg.Exchange != "" {
-		m = initialModel(cfg, persistStore)
-	} else {
+	profiles := fileCfg.ProfileNames()
+	switch {
+	case len(profiles) >= 2:
+		// Multiple profiles: show picker
+		m = newAppModelWithProfilePicker(fileCfg, configDir, persistStore)
+	case len(profiles) == 1:
+		// Single profile: resolve and go to browser
+		name := profiles[0]
+		cfg := resolveToTUIConfig(fileCfg, name, configDir)
 		m = newAppModel(cfg, persistStore)
+	default:
+		// No profiles: check env vars
+		if envURL := os.Getenv("AMQP_URL"); envURL != "" {
+			cfg := resolveToTUIConfig(fileCfg, "", configDir)
+			m = newAppModel(cfg, persistStore)
+		} else if envURL := os.Getenv("RABBITMQ_URL"); envURL != "" {
+			cfg := resolveToTUIConfig(fileCfg, "", configDir)
+			m = newAppModel(cfg, persistStore)
+		} else {
+			// No config, no env: URL prompt
+			m = newAppModelWithURLPrompt(fileCfg, configDir, persistStore)
+		}
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -52,14 +73,35 @@ func Run(cfg Config) error {
 	}
 
 	// Clean up consumer resources from final model state
-	switch fm := finalModel.(type) {
-	case model:
-		fm.cleanup()
-	case appModel:
+	if fm, ok := finalModel.(appModel); ok {
 		fm.consumer.cleanup()
 	}
 
 	return nil
+}
+
+// resolveToTUIConfig converts a FileConfig + profile into a tui.Config with decoder initialized.
+func resolveToTUIConfig(fileCfg *config.FileConfig, profileName, configDir string) Config {
+	resolved := fileCfg.Resolve(profileName, configDir)
+	cfg := Config{
+		RabbitMQURL:       resolved.RabbitMQURL,
+		ManagementURL:     resolved.ManagementURL,
+		ProtoPath:         resolved.ProtoPath,
+		DBPath:            resolved.DBPath,
+		MaxMessages:       resolved.MaxMessages,
+		DefaultSplitRatio: resolved.DefaultSplitRatio,
+		CompactMode:       resolved.CompactMode,
+		ConfigDir:         resolved.ConfigDir,
+	}
+
+	if cfg.ProtoPath != "" {
+		dec, err := proto.NewDecoder(cfg.ProtoPath)
+		if err == nil {
+			cfg.Decoder = dec
+		}
+	}
+
+	return cfg
 }
 
 // connectionLostMsg is sent when the consumer channel closes unexpectedly during consumption
@@ -175,7 +217,7 @@ func (m model) connectWithRetry(attempt int) tea.Cmd {
 					}
 				}
 
-				// Persist message if enabled (uses local writer, not global)
+				// Persist message
 				if writer != nil {
 					writer.Save(&db.MessageRecord{
 						Exchange:      del.Exchange,
@@ -271,7 +313,7 @@ func initialReplayModel(cfg Config, session db.Session, dbMsgs []db.Message) mod
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
 
-	splitRatio := loadSplitRatio(cfg.DefaultSplitRatio)
+	splitRatio := loadSplitRatio(cfg)
 
 	msgs := convertDBMessages(dbMsgs, cfg.Decoder)
 
@@ -342,4 +384,18 @@ func convertDBMessages(dbMsgs []db.Message, dec *proto.Decoder) []Message {
 		msgs[i] = msg
 	}
 	return msgs
+}
+
+// loadSplitRatio returns the persisted split ratio from config, falling back to the config default (or 0.5).
+func loadSplitRatio(cfg Config) float64 {
+	if cfg.ConfigDir != "" {
+		fileCfg, err := config.LoadFileConfig(cfg.ConfigDir)
+		if err == nil && fileCfg.UI.SplitRatio > 0 {
+			return fileCfg.UI.SplitRatio
+		}
+	}
+	if cfg.DefaultSplitRatio != 0 {
+		return cfg.DefaultSplitRatio
+	}
+	return 0.5
 }

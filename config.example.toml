@@ -1,0 +1,31 @@
+# rabbithole configuration
+# Place this file at ~/.config/rabbithole/config.toml
+# (or $XDG_CONFIG_HOME/rabbithole/config.toml)
+
+# Path to directory containing .proto files for decoding
+# proto = "/path/to/proto/files"
+
+# Maximum number of messages to keep in memory (default: 1000)
+# max_messages = 1000
+
+# Custom database path (default: ~/.local/share/rabbithole/rabbithole.db)
+# db = ""
+
+[ui]
+# Initial split ratio between message list and detail panel (0.2 - 0.8)
+# split_ratio = 0.5
+
+# Show only routing key in message list, no timestamp
+# compact_mode = false
+
+# Connection profiles
+# Define one or more named profiles. If multiple are defined,
+# a picker will be shown at startup.
+
+# [profiles.local]
+# url = "amqp://guest:guest@localhost:5672/"
+
+# [profiles.staging]
+# url = "amqp://user:pass@staging:5672/"
+# management_url = "http://staging:15672/api"
+# proto = "/path/to/staging/protos"

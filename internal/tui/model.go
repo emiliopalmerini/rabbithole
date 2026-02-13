@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/epalmerini/rabbithole/internal/config"
 	"github.com/epalmerini/rabbithole/internal/db"
 	"github.com/epalmerini/rabbithole/internal/rabbitmq"
 )
@@ -135,7 +136,7 @@ func initialModel(cfg Config, store db.Store) model {
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
 
-	splitRatio := loadSplitRatio(cfg.DefaultSplitRatio)
+	splitRatio := loadSplitRatio(cfg)
 
 	return model{
 		config:         cfg,
@@ -350,12 +351,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "resize_left":
 			if m.splitRatio > 0.2 {
 				m.splitRatio -= 0.05
-				saveSplitRatio(m.splitRatio)
+				if m.config.ConfigDir != "" {
+					_ = config.SaveSplitRatio(m.config.ConfigDir, m.splitRatio)
+				}
 			}
 		case "resize_right":
 			if m.splitRatio < 0.8 {
 				m.splitRatio += 0.05
-				saveSplitRatio(m.splitRatio)
+				if m.config.ConfigDir != "" {
+					_ = config.SaveSplitRatio(m.config.ConfigDir, m.splitRatio)
+				}
 			}
 		case "pause_toggle":
 			if m.replayMode {

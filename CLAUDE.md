@@ -14,27 +14,29 @@ make clean    # Remove artifacts
 # Build (using go directly)
 go build -o rabbithole .
 
-# Run (browser mode - shows topology explorer)
-./rabbithole -url "amqp://user:pass@host:5672/"
+# Run (uses config file at ~/.config/rabbithole/config.toml)
+./rabbithole
 
-# Run (direct consumer mode - bypasses browser)
-./rabbithole -exchange myexchange -routing-key "#"
-
-# Run with protobuf decoding
-./rabbithole -exchange myexchange -proto /path/to/proto/files
-
-# Run with SQLite persistence
-./rabbithole -exchange myexchange -persist
-
-# Run with custom database path
-./rabbithole -exchange myexchange -persist -db /path/to/messages.db
-
-# Run with custom management API URL
-./rabbithole -url "amqp://user:pass@host:5672/" -management-url "http://host:15672"
+# Run with AMQP_URL env var (no config file needed)
+AMQP_URL="amqp://user:pass@host:5672/" ./rabbithole
 
 # Install globally
 go install github.com/epalmerini/rabbithole@latest
 ```
+
+## Configuration
+
+Config file: `~/.config/rabbithole/config.toml` (or `$XDG_CONFIG_HOME/rabbithole/config.toml`).
+See `config.example.toml` for all options.
+
+Startup flow:
+- 2+ profiles → profile picker → browser
+- 1 profile → straight to browser
+- 0 profiles + `AMQP_URL`/`RABBITMQ_URL` env var → browser
+- 0 profiles + no env var → URL prompt → browser
+
+Persistence (SQLite) is always on. Database: `~/.local/share/rabbithole/rabbithole.db`.
+The only CLI flag is `--version`.
 
 ## Architecture
 
@@ -43,18 +45,22 @@ TUI application for consuming and inspecting RabbitMQ messages, built with Bubbl
 ### Package Structure
 
 - `internal/tui/` - TUI layer (Bubble Tea models)
+- `internal/config/` - TOML config loading, profile resolution, preferences persistence
+- `internal/xdg/` - XDG Base Directory helpers
 - `internal/rabbitmq/` - AMQP consumer + Management API client
 - `internal/proto/` - Dynamic protobuf decoding
 - `internal/db/` - SQLite persistence (sqlc-generated queries + async writer)
 
 ### TUI Views
 
-Three views managed by `appModel` in `app.go`:
-1. **Browser** (`browserModel`) - Topology explorer
-2. **Consumer** (`model`) - Message consumption with split-pane display. Has a **replay mode** for viewing historical sessions without AMQP.
-3. **Session browser** (`sessionBrowserModel`) - Browse/replay/delete past sessions from SQLite, with FTS5 content search.
+Five views managed by `appModel` in `app.go`:
+1. **Profile picker** (`profilePickerModel`) - Shown when 2+ profiles exist
+2. **URL prompt** (`urlPromptModel`) - Shown when no profiles and no env var
+3. **Browser** (`browserModel`) - Topology explorer
+4. **Consumer** (`model`) - Message consumption with split-pane display. Has a **replay mode** for viewing historical sessions without AMQP.
+5. **Session browser** (`sessionBrowserModel`) - Browse/replay/delete past sessions from SQLite, with FTS5 content search.
 
-Navigation flow: `s` (browser → sessions), `b` (sessions → browser), `b` from replay consumer → session browser (not topology browser).
+Navigation flow: profile picker/URL prompt → browser, `s` (browser → sessions), `b` (sessions → browser), `b` from replay consumer → session browser (not topology browser).
 
 ### Key Design Decisions
 

@@ -2,38 +2,30 @@ package tui
 
 import "github.com/epalmerini/rabbithole/internal/proto"
 
-type Config struct {
-	RabbitMQURL string
-	Exchange    string
-	RoutingKey  string
-	QueueName   string
-	ProtoPath   string
-	ShowVersion bool
-	Durable     bool
-	Decoder     *proto.Decoder
-
-	// UI options
-	AutoPauseOnSelect bool    // Pause when user navigates
-	DefaultSplitRatio float64 // Initial split ratio (0.5 = 50/50)
-	CompactMode       bool    // Show only routing key, no timestamp
-	MaxMessages       int     // Maximum in-memory messages (0 = default 1000)
-
-	// Management API options
-	ManagementURL string // Override management API URL (empty = derive from AMQP URL)
-
-	// Persistence options
-	EnablePersistence bool   // Enable SQLite persistence
-	DBPath            string // Custom database path (empty = default)
-}
-
 const defaultMaxMessages = 1000
 
-// DefaultConfig returns a Config with sensible defaults
-func DefaultConfig() Config {
-	return Config{
-		DefaultSplitRatio: 0.5,
-		MaxMessages:       defaultMaxMessages,
-	}
+// Config is the runtime configuration for TUI views.
+type Config struct {
+	RabbitMQURL   string
+	ManagementURL string
+	ProtoPath     string
+	DBPath        string
+	Decoder       *proto.Decoder
+	MaxMessages   int
+
+	// UI
+	AutoPauseOnSelect bool
+	DefaultSplitRatio float64
+	CompactMode       bool
+
+	// Runtime (set by browser on consume)
+	Exchange   string
+	RoutingKey string
+	QueueName  string
+	Durable    bool
+
+	// For saving prefs back to config.toml
+	ConfigDir string
 }
 
 // MessageLimit returns MaxMessages, falling back to the default if unset.

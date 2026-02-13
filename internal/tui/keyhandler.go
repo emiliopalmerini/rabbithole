@@ -103,6 +103,8 @@ func (v *VimKeyState) matchSequence() VimKeyResult {
 		return VimKeyResult{Action: "yank", Clear: true}
 	case "e":
 		return VimKeyResult{Action: "export", Clear: true}
+	case "E":
+		return VimKeyResult{Action: "export_csv", Clear: true}
 	case "m":
 		return VimKeyResult{Action: "bookmark_toggle", Clear: true}
 	case "'":

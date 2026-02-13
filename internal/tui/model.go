@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -259,6 +260,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.yankTab()
 		case "export":
 			return m, m.exportMessages()
+		case "export_csv":
+			return m, m.exportCSV()
 		case "bookmark_toggle":
 			m.toggleBookmark()
 		case "bookmark_next":
@@ -737,6 +740,80 @@ func (m *model) exportMessages() tea.Cmd {
 	return m.setStatusMsg(fmt.Sprintf("Exported to %s", exportPath))
 }
 
+func (m *model) exportCSV() tea.Cmd {
+	if len(m.messages) == 0 {
+		return m.setStatusMsg("No messages to export")
+	}
+
+	dataDir, err := db.DefaultDataDir()
+	if err != nil {
+		return m.setStatusMsg("Export failed: " + err.Error())
+	}
+
+	exportPath, err := writeCSVExport(m.messages, filepath.Join(dataDir, "exports"))
+	if err != nil {
+		return m.setStatusMsg("Export failed: " + err.Error())
+	}
+	return m.setStatusMsg(fmt.Sprintf("Exported to %s", exportPath))
+}
+
+func writeCSVExport(msgs []Message, exportDir string) (string, error) {
+	if len(msgs) == 0 {
+		return "", fmt.Errorf("no messages to export")
+	}
+
+	if err := os.MkdirAll(exportDir, 0755); err != nil {
+		return "", err
+	}
+
+	filename := fmt.Sprintf("rabbithole-export-%s.csv", time.Now().Format("20060102-150405"))
+	exportPath := filepath.Join(exportDir, filename)
+
+	f, err := os.Create(exportPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	defer w.Flush()
+
+	// Header
+	if err := w.Write([]string{"id", "timestamp", "exchange", "routing_key", "headers", "body"}); err != nil {
+		return "", err
+	}
+
+	for _, msg := range msgs {
+		var headers string
+		if len(msg.Headers) > 0 {
+			h, _ := json.Marshal(msg.Headers)
+			headers = string(h)
+		}
+
+		var body string
+		if msg.Decoded != nil {
+			b, _ := json.MarshalIndent(msg.Decoded, "", "  ")
+			body = string(b)
+		} else {
+			body = string(msg.RawBody)
+		}
+
+		record := []string{
+			fmt.Sprintf("%d", msg.ID),
+			msg.Timestamp.Format(time.RFC3339),
+			msg.Exchange,
+			msg.RoutingKey,
+			headers,
+			body,
+		}
+		if err := w.Write(record); err != nil {
+			return "", err
+		}
+	}
+
+	return exportPath, nil
+}
+
 func (m *model) setStatusMsg(msg string) tea.Cmd {
 	m.statusMsg = msg
 	m.statusMsgTime = time.Now()
@@ -1097,6 +1174,7 @@ func (m model) renderHelpBar() string {
 		{"gg/G", "top/end"},
 		{"/", "search"},
 		{"y/Y", "copy"},
+		{"e/E", "export"},
 		{"m", "mark"},
 		{"tab", "section"},
 		{"r", "raw"},
@@ -1149,6 +1227,7 @@ func (m model) renderHelpOverlay() string {
 				{"y", "Copy active tab content (routing key / headers / body)"},
 				{"Y", "Copy full message to clipboard"},
 				{"e", "Export all messages to JSON"},
+				{"E", "Export all messages to CSV"},
 				{"m", "Toggle bookmark"},
 				{"'", "Jump to next bookmark"},
 				{"c", "Clear all messages"},

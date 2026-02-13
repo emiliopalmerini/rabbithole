@@ -3,6 +3,7 @@ module github.com/epalmerini/rabbithole
 go 1.25.5
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/charmbracelet/bubbles v0.21.1

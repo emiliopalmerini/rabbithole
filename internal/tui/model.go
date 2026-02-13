@@ -248,6 +248,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prevSearchResult()
 		case "yank":
 			return m, m.yankMessage()
+		case "yank_routing_key":
+			return m, m.yankRoutingKey()
 		case "export":
 			return m, m.exportMessages()
 		case "bookmark_toggle":
@@ -608,6 +610,17 @@ func (m *model) yankMessage() tea.Cmd {
 		return m.setStatusMsg("Copy failed: " + err.Error())
 	}
 	return m.setStatusMsg("Copied to clipboard")
+}
+
+func (m *model) yankRoutingKey() tea.Cmd {
+	if len(m.messages) == 0 || m.selectedIdx >= len(m.messages) {
+		return nil
+	}
+	rk := m.messages[m.selectedIdx].RoutingKey
+	if err := clipboard.WriteAll(rk); err != nil {
+		return m.setStatusMsg("Copy failed: " + err.Error())
+	}
+	return m.setStatusMsg("Copied routing key")
 }
 
 func (m *model) exportMessages() tea.Cmd {
@@ -993,7 +1006,7 @@ func (m model) renderHelpBar() string {
 		{"j/k", "nav"},
 		{"gg/G", "top/end"},
 		{"/", "search"},
-		{"y", "copy"},
+		{"y/Y", "copy"},
 		{"m", "mark"},
 		{"r", "raw"},
 		{"p", "pause"},
@@ -1042,7 +1055,8 @@ func (m model) renderHelpOverlay() string {
 		{
 			name: "Actions",
 			keys: []struct{ key, desc string }{
-				{"y", "Copy message to clipboard"},
+				{"y", "Copy routing key to clipboard"},
+				{"Y", "Copy full message to clipboard"},
 				{"e", "Export all messages to JSON"},
 				{"m", "Toggle bookmark"},
 				{"'", "Jump to next bookmark"},

@@ -212,11 +212,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "tab":
-			m.detailTab = (m.detailTab + 1) % 3
+			m.detailTab = (m.detailTab + 1) % m.tabCount()
 			m.detailViewport.YOffset = 0
 			return m, nil
 		case "shift+tab":
-			m.detailTab = (m.detailTab + 2) % 3
+			m.detailTab = (m.detailTab + m.tabCount() - 1) % m.tabCount()
 			m.detailViewport.YOffset = 0
 			return m, nil
 		case "up":
@@ -689,6 +689,13 @@ func (m *model) yankTab() tea.Cmd {
 			return m.setStatusMsg("Copy failed: " + err.Error())
 		}
 		return m.setStatusMsg("Copied body")
+	case 3: // Dead Letter
+		lines := renderDLXTab(msg)
+		content := strings.Join(lines, "\n")
+		if err := clipboard.WriteAll(content); err != nil {
+			return m.setStatusMsg("Copy failed: " + err.Error())
+		}
+		return m.setStatusMsg("Copied dead letter info")
 	}
 	return nil
 }
@@ -1007,13 +1014,20 @@ func (m model) renderMessageList(width, height int) string {
 			sourceIndicator = "H"
 		}
 
-		// Bookmark indicator
-		prefix := sourceIndicator + " "
-		if m.bookmarks[msg.ID] {
-			prefix = sourceIndicator + "*"
+		// DLX indicator
+		dlxIndicator := " "
+		if isDLXMessage(msg) {
+			dlxIndicator = "†"
 		}
-		if i == m.selectedIdx {
-			prefix = sourceIndicator + ">"
+
+		// Bookmark indicator
+		prefix := sourceIndicator + dlxIndicator
+		if m.bookmarks[msg.ID] {
+			prefix += "*"
+		} else if i == m.selectedIdx {
+			prefix += ">"
+		} else {
+			prefix += " "
 		}
 
 		var line string
@@ -1035,6 +1049,8 @@ func (m model) renderMessageList(width, height int) string {
 			line = selectedMessageStyle.Render(line)
 		} else if m.bookmarks[msg.ID] {
 			line = bookmarkStyle.Render(line)
+		} else if isDLXMessage(msg) {
+			line = dlxStyle.Render(line)
 		} else if msg.Historical {
 			line = mutedStyle.Render(line)
 		}
@@ -1062,6 +1078,11 @@ func (m model) renderDetailPanel(width, height int) string {
 	msg := m.messages[m.selectedIdx]
 	innerWidth := width - 4
 
+	// Clamp tab index if DLX tab disappeared (switched to non-DLX message)
+	if m.detailTab >= m.tabCount() {
+		m.detailTab = 0
+	}
+
 	// Tab bar
 	tabBar := m.renderDetailTabBar()
 
@@ -1074,6 +1095,8 @@ func (m model) renderDetailPanel(width, height int) string {
 		lines = m.renderHeadersTab(msg, innerWidth)
 	case 2:
 		lines = m.renderBodyTab(msg)
+	case 3:
+		lines = renderDLXTab(msg)
 	}
 
 	// Split into individual lines for scrolling
@@ -1108,8 +1131,18 @@ func (m model) renderDetailPanel(width, height int) string {
 	return detailPanelStyle.Width(width).Height(height).Render(content)
 }
 
+func (m model) tabCount() int {
+	if len(m.messages) > 0 && m.selectedIdx < len(m.messages) && isDLXMessage(m.messages[m.selectedIdx]) {
+		return 4
+	}
+	return 3
+}
+
 func (m model) renderDetailTabBar() string {
 	tabs := []string{"Metadata", "Headers", "Body"}
+	if m.tabCount() == 4 {
+		tabs = append(tabs, "Dead Letter")
+	}
 	var parts []string
 	for i, name := range tabs {
 		if i == m.detailTab {

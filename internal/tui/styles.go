@@ -142,4 +142,8 @@ var (
 	// Confirmation message (for clipboard copy, export, etc.)
 	confirmationStyle = lipgloss.NewStyle().
 				Foreground(greenColor)
+
+	// Dead-letter indicator
+	dlxStyle = lipgloss.NewStyle().
+			Foreground(redColor)
 )

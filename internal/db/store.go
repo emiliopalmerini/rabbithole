@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/epalmerini/rabbithole/internal/xdg"
 	_ "modernc.org/sqlite"
 )
 
@@ -96,15 +97,7 @@ func NewStore(customPath string) (*SQLiteStore, error) {
 
 // DefaultDataDir returns the application data directory following XDG spec.
 func DefaultDataDir() (string, error) {
-	// Use XDG_DATA_HOME or fall back to ~/.local/share
-	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
-		return filepath.Join(xdgData, "rabbithole"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "share", "rabbithole"), nil
+	return xdg.Dir("XDG_DATA_HOME", ".local/share")
 }
 
 func initSchema(db *sql.DB) error {

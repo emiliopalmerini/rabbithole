@@ -260,10 +260,7 @@ func initialReplayModel(cfg Config, session db.Session, dbMsgs []db.Message) mod
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
 
-	splitRatio := cfg.DefaultSplitRatio
-	if splitRatio == 0 {
-		splitRatio = 0.5
-	}
+	splitRatio := loadSplitRatio(cfg.DefaultSplitRatio)
 
 	msgs := convertDBMessages(dbMsgs, cfg.Decoder)
 

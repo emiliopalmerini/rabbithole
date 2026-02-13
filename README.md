@@ -61,6 +61,19 @@ This opens the topology browser where you can:
 3. Set routing key pattern and durability
 4. Start consuming
 
+### Connection
+
+The connection URL can be provided via CLI flag or environment variable (to avoid credentials in shell history):
+
+```bash
+# Via environment variable (recommended)
+export AMQP_URL="amqp://user:pass@host:5672/"
+rabbithole -exchange my-exchange
+
+# Also supported: RABBITMQ_URL
+# Priority: -url flag > AMQP_URL > RABBITMQ_URL > default
+```
+
 ### Direct Consumer Mode
 
 Skip the browser and consume directly:
@@ -113,7 +126,7 @@ The database includes FTS5 full-text search on message bodies and routing keys.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-url` | `amqp://guest:guest@localhost:5672/` | RabbitMQ connection URL |
+| `-url` | `amqp://guest:guest@localhost:5672/` | RabbitMQ connection URL (env: `AMQP_URL`, `RABBITMQ_URL`) |
 | `-exchange` | | Exchange to bind to (omit for browser mode) |
 | `-routing-key` | `#` | Routing key pattern (`#` = all, `*` = single word) |
 | `-queue` | | Queue name (empty = auto-generated exclusive queue) |

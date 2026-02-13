@@ -254,8 +254,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prevSearchResult()
 		case "yank":
 			return m, m.yankMessage()
-		case "yank_routing_key":
-			return m, m.yankRoutingKey()
+		case "yank_tab":
+			return m, m.yankTab()
 		case "export":
 			return m, m.exportMessages()
 		case "bookmark_toggle":
@@ -620,15 +620,41 @@ func (m *model) yankMessage() tea.Cmd {
 	return m.setStatusMsg("Copied to clipboard")
 }
 
-func (m *model) yankRoutingKey() tea.Cmd {
+func (m *model) yankTab() tea.Cmd {
 	if len(m.messages) == 0 || m.selectedIdx >= len(m.messages) {
 		return nil
 	}
-	rk := m.messages[m.selectedIdx].RoutingKey
-	if err := clipboard.WriteAll(rk); err != nil {
-		return m.setStatusMsg("Copy failed: " + err.Error())
+	msg := m.messages[m.selectedIdx]
+
+	switch m.detailTab {
+	case 0: // Metadata → routing key
+		if err := clipboard.WriteAll(msg.RoutingKey); err != nil {
+			return m.setStatusMsg("Copy failed: " + err.Error())
+		}
+		return m.setStatusMsg("Copied routing key")
+	case 1: // Headers
+		if len(msg.Headers) == 0 {
+			return m.setStatusMsg("No headers to copy")
+		}
+		content, _ := json.MarshalIndent(msg.Headers, "", "  ")
+		if err := clipboard.WriteAll(string(content)); err != nil {
+			return m.setStatusMsg("Copy failed: " + err.Error())
+		}
+		return m.setStatusMsg("Copied headers")
+	case 2: // Body
+		var body string
+		if msg.Decoded != nil {
+			b, _ := json.MarshalIndent(msg.Decoded, "", "  ")
+			body = string(b)
+		} else {
+			body = string(msg.RawBody)
+		}
+		if err := clipboard.WriteAll(body); err != nil {
+			return m.setStatusMsg("Copy failed: " + err.Error())
+		}
+		return m.setStatusMsg("Copied body")
 	}
-	return m.setStatusMsg("Copied routing key")
+	return nil
 }
 
 func (m *model) exportMessages() tea.Cmd {
@@ -1091,7 +1117,7 @@ func (m model) renderHelpOverlay() string {
 		{
 			name: "Actions",
 			keys: []struct{ key, desc string }{
-				{"y", "Copy routing key to clipboard"},
+				{"y", "Copy active tab content (routing key / headers / body)"},
 				{"Y", "Copy full message to clipboard"},
 				{"e", "Export all messages to JSON"},
 				{"m", "Toggle bookmark"},

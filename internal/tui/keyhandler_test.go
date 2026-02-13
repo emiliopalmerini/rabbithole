@@ -19,7 +19,7 @@ func TestProcessKey_SingleKeys(t *testing.T) {
 		{"n next search", "n", "search_next", 1},
 		{"N prev search", "N", "search_prev", 1},
 		{"q quits", "q", "quit", 1},
-		{"y yanks routing key", "y", "yank_routing_key", 1},
+		{"y yanks active tab", "y", "yank_tab", 1},
 		{"Y yanks full message", "Y", "yank", 1},
 		{"e exports", "e", "export", 1},
 		{"r toggles raw", "r", "toggle_raw", 1},

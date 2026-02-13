@@ -98,7 +98,7 @@ func (v *VimKeyState) matchSequence() VimKeyResult {
 
 	// Actions
 	case "y":
-		return VimKeyResult{Action: "yank_routing_key", Clear: true}
+		return VimKeyResult{Action: "yank_tab", Clear: true}
 	case "Y":
 		return VimKeyResult{Action: "yank", Clear: true}
 	case "e":

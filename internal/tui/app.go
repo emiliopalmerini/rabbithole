@@ -82,7 +82,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		// Global escape to go back to browser from consumer
-		if m.view == appViewConsumer && msg.String() == "b" && !m.consumer.searchMode {
+		if m.view == appViewConsumer && msg.String() == "b" && !m.consumer.searchMode && !m.consumer.filterMode {
 			// Clean up consumer resources on navigate-away
 			m.consumer.cleanup()
 

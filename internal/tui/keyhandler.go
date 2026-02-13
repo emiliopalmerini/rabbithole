@@ -101,6 +101,10 @@ func (v *VimKeyState) matchSequence() VimKeyResult {
 		return VimKeyResult{Action: "yank_tab", Clear: true}
 	case "Y":
 		return VimKeyResult{Action: "yank", Clear: true}
+	case "f":
+		return VimKeyResult{Action: "filter_start", Clear: true}
+	case "F":
+		return VimKeyResult{Action: "filter_toggle", Clear: true}
 	case "e":
 		return VimKeyResult{Action: "export", Clear: true}
 	case "E":

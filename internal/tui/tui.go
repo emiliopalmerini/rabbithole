@@ -256,6 +256,11 @@ func initialReplayModel(cfg Config, session db.Session, dbMsgs []db.Message) mod
 	si.CharLimit = 100
 	si.Width = 30
 
+	fi := textinput.New()
+	fi.Placeholder = "Filter..."
+	fi.CharLimit = 100
+	fi.Width = 30
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
@@ -277,6 +282,7 @@ func initialReplayModel(cfg Config, session db.Session, dbMsgs []db.Message) mod
 		splitRatio:     splitRatio,
 		compactMode:    cfg.CompactMode,
 		searchInput:    si,
+		filterInput:    fi,
 		spinner:        sp,
 	}
 }

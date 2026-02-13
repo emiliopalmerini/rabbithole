@@ -66,6 +66,13 @@ type model struct {
 	searchResults   []int
 	searchResultIdx int
 
+	// Filter
+	filterMode   bool
+	filterExpr   string
+	filterActive bool
+	filterInput  textinput.Model
+	filteredIdx  []int // sorted indices into m.messages; nil when filter is off
+
 	// Bookmarks
 	bookmarks map[int]bool
 
@@ -119,6 +126,11 @@ func initialModel(cfg Config, store db.Store) model {
 	si.CharLimit = 100
 	si.Width = 30
 
+	fi := textinput.New()
+	fi.Placeholder = "Filter..."
+	fi.CharLimit = 100
+	fi.Width = 30
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
@@ -137,6 +149,7 @@ func initialModel(cfg Config, store db.Store) model {
 		splitRatio:     splitRatio,
 		compactMode:    cfg.CompactMode,
 		searchInput:    si,
+		filterInput:    fi,
 		spinner:        sp,
 	}
 }
@@ -172,6 +185,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				var cmd tea.Cmd
 				m.searchInput, cmd = m.searchInput.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// Handle filter mode input
+		if m.filterMode {
+			switch msg.String() {
+			case "esc":
+				m.filterMode = false
+				m.filterInput.Blur()
+				return m, nil
+			case "enter":
+				m.filterMode = false
+				m.filterInput.Blur()
+				expr := m.filterInput.Value()
+				if expr == "" {
+					// Clear filter
+					m.filterExpr = ""
+					m.filterActive = false
+					m.filteredIdx = nil
+				} else {
+					m.filterExpr = expr
+					m.filterActive = true
+					m.filteredIdx = computeFilteredIndices(m.messages, expr)
+					if len(m.filteredIdx) > 0 && !isVisible(m.filteredIdx, m.selectedIdx) {
+						m.selectedIdx = m.filteredIdx[0]
+						m.detailViewport.YOffset = 0
+					}
+				}
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.filterInput, cmd = m.filterInput.Update(msg)
 				return m, cmd
 			}
 		}
@@ -239,13 +285,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "move_up":
 			m.moveBy(-result.Count)
 		case "go_top":
-			m.selectedIdx = 0
+			if len(m.filteredIdx) > 0 {
+				m.selectedIdx = m.filteredIdx[0]
+			} else {
+				m.selectedIdx = 0
+			}
 			m.detailViewport.YOffset = 0
 		case "go_bottom":
-			if len(m.messages) > 0 {
+			if len(m.filteredIdx) > 0 {
+				m.selectedIdx = m.filteredIdx[len(m.filteredIdx)-1]
+			} else if len(m.messages) > 0 {
 				m.selectedIdx = len(m.messages) - 1
-				m.detailViewport.YOffset = 0
 			}
+			m.detailViewport.YOffset = 0
 		case "center_line":
 			// Centering is handled in renderMessageList
 		case "search_start":
@@ -257,6 +309,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nextSearchResult()
 		case "search_prev":
 			m.prevSearchResult()
+		case "filter_start":
+			m.filterMode = true
+			m.filterInput.SetValue(m.filterExpr)
+			m.filterInput.Focus()
+			return m, textinput.Blink
+		case "filter_toggle":
+			if m.filterExpr != "" {
+				m.filterActive = !m.filterActive
+				if m.filterActive {
+					m.filteredIdx = computeFilteredIndices(m.messages, m.filterExpr)
+					if len(m.filteredIdx) > 0 && !isVisible(m.filteredIdx, m.selectedIdx) {
+						m.selectedIdx = m.filteredIdx[0]
+						m.detailViewport.YOffset = 0
+					}
+				} else {
+					m.filteredIdx = nil
+				}
+			}
 		case "yank":
 			return m, m.yankMessage()
 		case "yank_tab":
@@ -314,6 +384,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.pauseBuffer = m.pauseBuffer[:0]
 				m.newMsgCount = 0
+				// Re-apply filter after merging
+				if m.filterActive && m.filterExpr != "" {
+					m.filteredIdx = computeFilteredIndices(m.messages, m.filterExpr)
+				}
 			}
 		case "clear":
 			m.messages = m.messages[:0]
@@ -321,6 +395,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedIdx = 0
 			m.messageCount = 0
 			m.bookmarks = make(map[int]bool)
+			m.filteredIdx = nil
 			m.newMsgCount = 0
 		case "back":
 			// Handled by parent app model
@@ -416,6 +491,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedIdx = len(m.messages) - 1
 			}
 		}
+		// Re-apply filter for new message
+		if m.filterActive && m.filterExpr != "" {
+			m.filteredIdx = computeFilteredIndices(m.messages, m.filterExpr)
+		}
 		cmds = append(cmds, m.waitForMessage())
 
 	case spinner.TickMsg:
@@ -434,15 +513,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) moveBy(delta int) {
-	newIdx := m.selectedIdx + delta
-	if newIdx < 0 {
-		newIdx = 0
-	}
-	if newIdx >= len(m.messages) {
-		newIdx = len(m.messages) - 1
-	}
-	if newIdx < 0 {
-		newIdx = 0
+	var newIdx int
+
+	if len(m.filteredIdx) > 0 {
+		// Navigate through visible messages only
+		if delta > 0 {
+			newIdx = m.selectedIdx
+			for i := 0; i < delta; i++ {
+				newIdx = nextVisible(m.filteredIdx, newIdx)
+			}
+		} else {
+			newIdx = m.selectedIdx
+			for i := 0; i < -delta; i++ {
+				newIdx = prevVisible(m.filteredIdx, newIdx)
+			}
+		}
+	} else {
+		newIdx = m.selectedIdx + delta
+		if newIdx < 0 {
+			newIdx = 0
+		}
+		if newIdx >= len(m.messages) {
+			newIdx = len(m.messages) - 1
+		}
+		if newIdx < 0 {
+			newIdx = 0
+		}
 	}
 
 	// Reset detail scroll when selection changes
@@ -871,10 +967,12 @@ func (m model) View() string {
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, messageList, detailPanel)
 
-	// Help bar or search bar
+	// Help bar, search bar, or filter bar
 	var bottomBar string
 	if m.searchMode {
 		bottomBar = m.renderSearchBar()
+	} else if m.filterMode {
+		bottomBar = m.renderFilterBar()
 	} else {
 		bottomBar = m.renderHelpBar()
 	}
@@ -938,6 +1036,14 @@ func (m model) renderStatusBar() string {
 		}
 	}
 
+	// Filter indicator
+	filterStatus := ""
+	if m.filterActive && m.filterExpr != "" {
+		filterStatus = disconnectedStyle.Render(fmt.Sprintf(" [FILTER: %s (%d)]", m.filterExpr, len(m.filteredIdx)))
+	} else if m.filterExpr != "" {
+		filterStatus = mutedStyle.Render(fmt.Sprintf(" [filter off: %s]", m.filterExpr))
+	}
+
 	// Status message (brief confirmation)
 	statusMsgDisplay := ""
 	if m.statusMsg != "" && time.Since(m.statusMsgTime) < 3*time.Second {
@@ -955,6 +1061,7 @@ func (m model) renderStatusBar() string {
 	parts := []string{
 		connStatus,
 		pausedStatus,
+		filterStatus,
 		searchStatus,
 		statusMsgDisplay,
 		"  │  ",
@@ -992,20 +1099,42 @@ func (m model) renderMessageList(width, height int) string {
 		return messageListStyle.Width(width).Height(height).Render(emptyContent)
 	}
 
-	startIdx := 0
-	if m.selectedIdx >= innerHeight {
-		startIdx = m.selectedIdx - innerHeight + 1
+	// Build list of visible message indices
+	var visible []int
+	if len(m.filteredIdx) > 0 {
+		visible = m.filteredIdx
+	} else {
+		visible = make([]int, len(m.messages))
+		for i := range visible {
+			visible[i] = i
+		}
 	}
 
-	endIdx := startIdx + innerHeight
-	if endIdx > len(m.messages) {
-		endIdx = len(m.messages)
+	if len(visible) == 0 {
+		emptyContent := emptyStateStyle.Render("No matches for filter")
+		return messageListStyle.Width(width).Height(height).Render(emptyContent)
+	}
+
+	// Find selected position in visible list
+	selPos := sort.SearchInts(visible, m.selectedIdx)
+	if selPos >= len(visible) {
+		selPos = len(visible) - 1
+	}
+
+	startPos := 0
+	if selPos >= innerHeight {
+		startPos = selPos - innerHeight + 1
+	}
+
+	endPos := startPos + innerHeight
+	if endPos > len(visible) {
+		endPos = len(visible)
 	}
 
 	items := make([]string, 0, innerHeight)
 	innerWidth := width - 4 // Account for border and padding
 
-	for i := startIdx; i < endIdx; i++ {
+	for _, i := range visible[startPos:endPos] {
 		msg := m.messages[i]
 
 		// Source indicator: H=historical (from DB), L=live (from queue)
@@ -1217,11 +1346,16 @@ func (m model) renderSearchBar() string {
 	return helpStyle.Render("Search: ") + m.searchInput.View() + helpStyle.Render("  (Enter to search, Esc to cancel)")
 }
 
+func (m model) renderFilterBar() string {
+	return helpStyle.Render("Filter: ") + m.filterInput.View() + helpStyle.Render("  (Enter to apply, Esc to cancel)")
+}
+
 func (m model) renderHelpBar() string {
 	keys := []struct{ key, desc string }{
 		{"j/k", "nav"},
 		{"gg/G", "top/end"},
 		{"/", "search"},
+		{"f/F", "filter"},
 		{"y/Y", "copy"},
 		{"e/E", "export"},
 		{"m", "mark"},
@@ -1263,11 +1397,13 @@ func (m model) renderHelpOverlay() string {
 			},
 		},
 		{
-			name: "Search",
+			name: "Search & Filter",
 			keys: []struct{ key, desc string }{
 				{"/", "Start search (prefix: rk: body: ex: hdr: type: re:)"},
 				{"n / N", "Next / previous result"},
-				{"Esc", "Clear search"},
+				{"f", "Set filter (same prefixes as search)"},
+				{"F", "Toggle filter on/off"},
+				{"Esc", "Clear search / cancel filter"},
 			},
 		},
 		{

@@ -244,7 +244,13 @@ func (m *model) cleanup() {
 		m.asyncWriter = nil
 	}
 	if m.sessionID > 0 && m.store != nil {
-		_ = m.store.EndSession(context.Background(), m.sessionID)
+		ctx := context.Background()
+		count, err := m.store.CountMessagesBySession(ctx, m.sessionID)
+		if err == nil && count == 0 {
+			_ = m.store.DeleteSession(ctx, m.sessionID)
+		} else {
+			_ = m.store.EndSession(ctx, m.sessionID)
+		}
 		m.sessionID = 0
 	}
 }

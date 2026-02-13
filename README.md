@@ -14,6 +14,7 @@ A beautiful TUI for consuming and inspecting RabbitMQ messages with Protobuf dec
 - **Pause/Resume** - Freeze the stream to inspect messages
 - **Durable Queues** - Create persistent queues that survive broker restarts
 - **SQLite Persistence** - Optionally save messages to a local database for history and replay
+- **Session Browser** - Browse past sessions, search message content (FTS5), replay or delete sessions
 - **Session History** - Auto-load messages from previous sessions when persistence is enabled
 - **Search & Filter** - Search through messages with vim-style keybindings (`/`, `n`, `N`)
 - **Bookmarks** - Mark important messages for quick reference
@@ -122,6 +123,12 @@ The database includes FTS5 full-text search on message bodies and routing keys.
 
 **Session History**: When persistence is enabled, rabbithole automatically loads messages from your last session on the same exchange. Historical messages are displayed with a muted style and marked with `H` (historical) vs `L` (live) in the status bar.
 
+**Session Browser**: Press `s` in the topology browser to open the session browser, which lists all past sessions with message counts and time ranges. You can:
+- **Filter** (`/`) sessions by exchange or routing key
+- **Search** (`S`) message content across sessions using full-text search
+- **Replay** (`Enter`) a session to view its messages in a read-only consumer (no AMQP connection needed)
+- **Delete** (`d`) old sessions (with confirmation)
+
 ## CLI Flags
 
 | Flag | Default | Description |
@@ -181,7 +188,7 @@ The database includes FTS5 full-text search on message bodies and routing keys.
 #### Navigation
 | Key | Action |
 |-----|--------|
-| `b` | Back to topology browser |
+| `b` | Back to previous view |
 | `q` | Quit |
 
 ### Topology Browser
@@ -192,8 +199,25 @@ The database includes FTS5 full-text search on message bodies and routing keys.
 | `↓` / `j` | Move selection down |
 | `Enter` | Select exchange/binding |
 | `/` | Filter exchanges/bindings (type to search) |
+| `s` | Open session browser (requires `-persist`) |
 | `Esc` | Go back / Exit filter mode |
 | `r` | Refresh topology |
+| `q` | Quit |
+
+### Session Browser
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Move selection up |
+| `↓` / `j` | Move selection down |
+| `g` / `G` | Jump to first / last session |
+| `Enter` | Replay selected session |
+| `/` | Filter by exchange / routing key |
+| `S` | Search message content (FTS5) |
+| `d` | Delete session (Enter to confirm, Esc to cancel) |
+| `r` | Refresh session list |
+| `b` | Back to topology browser |
+| `Esc` | Clear active filter |
 | `q` | Quit |
 
 ### Create Queue Dialog

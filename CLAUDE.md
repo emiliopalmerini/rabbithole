@@ -47,6 +47,7 @@ This is a TUI application for consuming and inspecting RabbitMQ messages, built 
   - `keyhandler.go` - Vim-style keybinding handler with multi-key sequences and numeric prefixes
   - `model.go` - Consumer view with search, bookmarks, yank, export
   - `browser.go` - Topology browser with filtering
+  - `session_browser.go` - Session browser for replaying past sessions
   - `app.go` - Main app model that switches between views
 - `internal/rabbitmq/` - RabbitMQ integration (AMQP consumer + Management API client)
 - `internal/proto/` - Dynamic protobuf decoding using bufbuild/protocompile
@@ -55,11 +56,12 @@ This is a TUI application for consuming and inspecting RabbitMQ messages, built 
 
 ### TUI Architecture (Bubble Tea)
 
-The app has two main views managed by `appModel`:
-1. **Browser view** (`browserModel`) - Topology explorer showing exchanges/bindings, allows creating queues. Supports filtering with `/` key.
-2. **Consumer view** (`model`) - Real-time message consumption with split-pane display. Features vim-style navigation, search, bookmarks, yank/export, and multiple view modes.
+The app has three views managed by `appModel`:
+1. **Browser view** (`browserModel`) - Topology explorer showing exchanges/bindings, allows creating queues. Supports filtering with `/` key. Press `s` to open session browser.
+2. **Consumer view** (`model`) - Real-time message consumption with split-pane display. Features vim-style navigation, search, bookmarks, yank/export, and multiple view modes. Supports a read-only **replay mode** (`replayMode` flag) for viewing historical sessions without an AMQP connection.
+3. **Session browser view** (`sessionBrowserModel`) - Lists past sessions from SQLite with message counts. Supports `/` metadata filter (exchange/routing key), `S` FTS5 content search across message bodies, `Enter` to replay a session in the consumer, and `d` to delete sessions with confirmation.
 
-Each view implements the Bubble Tea `Model` interface (`Init`, `Update`, `View`). View switching is handled by `appModel` which delegates to the active child model.
+Each view implements the Bubble Tea `Model` interface (`Init`, `Update`, `View`). View switching is handled by `appModel` which delegates to the active child model. Navigation: `s` (browser → sessions), `b` (sessions → browser or consumer → previous view).
 
 **Vim-style keybindings**: The consumer view uses a stateful key handler (`VimKeyState` in `keyhandler.go`) that supports:
 - Multi-key sequences (e.g., `gg`, `zz`)
@@ -104,6 +106,20 @@ The persistence flow:
 - Status bar shows breakdown (e.g., "5H+3L messages")
 
 Database location: `~/.local/share/rabbithole/rabbithole.db` (follows XDG spec)
+
+### Session Browser
+
+The session browser (`session_browser.go`) provides a TUI for browsing and replaying past sessions stored in SQLite. Accessible via `s` key from the topology browser (only when persistence is enabled).
+
+Key features:
+- **Session list**: Shows exchange, routing key, message count, and time range for each session
+- **Metadata filter** (`/`): Live filter by exchange or routing key text
+- **FTS content search** (`S`): Searches message bodies across all sessions using the FTS5 index, then filters the session list to only matching sessions
+- **Replay** (`Enter`): Loads all messages from the selected session and opens the consumer view in read-only replay mode (no AMQP connection, `replayMode=true`, `store=nil`)
+- **Delete** (`d`): Prompts for confirmation, then deletes the session (CASCADE removes messages and FTS index entries)
+- **Navigation**: `j/k`, `g/G`, scrolling — same patterns as browser view
+
+The replay consumer is created via `initialReplayModel()` in `tui.go`, which pre-populates messages and sets `connState=stateConnected` without starting any AMQP connection. The status bar shows `▶ Replay` instead of connection status. Pressing `b` from a replay returns to the session browser (not the topology browser).
 
 ### Consumer View Features
 

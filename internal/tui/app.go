@@ -66,12 +66,12 @@ func newAppModelWithURLPrompt(fileCfg *config.FileConfig, configDir string, stor
 	}
 }
 
-// resolveAndInitBrowser resolves the config for a given profile/URL and creates the browser.
-func (m *appModel) resolveAndInitBrowser(profileName string, url string) tea.Cmd {
+// resolveConfig builds a runtime Config from the file config, profile name, and optional URL override.
+func resolveConfig(fileCfg *config.FileConfig, configDir, profileName, url string) Config {
 	var cfg Config
 
-	if m.fileCfg != nil {
-		resolved := m.fileCfg.Resolve(profileName, m.configDir)
+	if fileCfg != nil {
+		resolved := fileCfg.Resolve(profileName, configDir)
 		cfg = Config{
 			RabbitMQURL:       resolved.RabbitMQURL,
 			ManagementURL:     resolved.ManagementURL,
@@ -97,10 +97,7 @@ func (m *appModel) resolveAndInitBrowser(profileName string, url string) tea.Cmd
 		}
 	}
 
-	m.config = cfg
-	m.view = appViewBrowser
-	m.browser = newBrowserModel(cfg)
-	return m.browser.Init()
+	return cfg
 }
 
 func (m appModel) Init() tea.Cmd {
@@ -118,10 +115,18 @@ func (m appModel) Init() tea.Cmd {
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case profileSelectedMsg:
-		return m, m.resolveAndInitBrowser(msg.name, "")
+		cfg := resolveConfig(m.fileCfg, m.configDir, msg.name, "")
+		m.config = cfg
+		m.view = appViewBrowser
+		m.browser = newBrowserModel(cfg)
+		return m, m.browser.Init()
 
 	case urlEnteredMsg:
-		return m, m.resolveAndInitBrowser("", msg.url)
+		cfg := resolveConfig(m.fileCfg, m.configDir, "", msg.url)
+		m.config = cfg
+		m.view = appViewBrowser
+		m.browser = newBrowserModel(cfg)
+		return m, m.browser.Init()
 
 	case startConsumingMsg:
 		// Track newly created queue

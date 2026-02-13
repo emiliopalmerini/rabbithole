@@ -81,7 +81,7 @@ type model struct {
 	compactMode  bool
 	showHelp     bool
 	timestampRel bool
-	detailTab    int // 0=metadata, 1=headers, 2=body
+	detailTab    int // 0=body, 1=headers, 2=metadata
 
 	// Pause buffer (messages received while paused)
 	pauseBuffer []Message
@@ -759,21 +759,7 @@ func (m *model) yankTab() tea.Cmd {
 	msg := m.messages[m.selectedIdx]
 
 	switch m.detailTab {
-	case 0: // Metadata → routing key
-		if err := clipboard.WriteAll(msg.RoutingKey); err != nil {
-			return m.setStatusMsg("Copy failed: " + err.Error())
-		}
-		return m.setStatusMsg("Copied routing key")
-	case 1: // Headers
-		if len(msg.Headers) == 0 {
-			return m.setStatusMsg("No headers to copy")
-		}
-		content, _ := json.MarshalIndent(msg.Headers, "", "  ")
-		if err := clipboard.WriteAll(string(content)); err != nil {
-			return m.setStatusMsg("Copy failed: " + err.Error())
-		}
-		return m.setStatusMsg("Copied headers")
-	case 2: // Body
+	case 0: // Body
 		var body string
 		if msg.Decoded != nil {
 			b, _ := json.MarshalIndent(msg.Decoded, "", "  ")
@@ -785,6 +771,20 @@ func (m *model) yankTab() tea.Cmd {
 			return m.setStatusMsg("Copy failed: " + err.Error())
 		}
 		return m.setStatusMsg("Copied body")
+	case 1: // Headers
+		if len(msg.Headers) == 0 {
+			return m.setStatusMsg("No headers to copy")
+		}
+		content, _ := json.MarshalIndent(msg.Headers, "", "  ")
+		if err := clipboard.WriteAll(string(content)); err != nil {
+			return m.setStatusMsg("Copy failed: " + err.Error())
+		}
+		return m.setStatusMsg("Copied headers")
+	case 2: // Metadata → routing key
+		if err := clipboard.WriteAll(msg.RoutingKey); err != nil {
+			return m.setStatusMsg("Copy failed: " + err.Error())
+		}
+		return m.setStatusMsg("Copied routing key")
 	case 3: // Dead Letter
 		lines := renderDLXTab(msg)
 		content := strings.Join(lines, "\n")
@@ -1219,11 +1219,11 @@ func (m model) renderDetailPanel(width, height int) string {
 	var lines []string
 	switch m.detailTab {
 	case 0:
-		lines = m.renderMetadataTab(msg)
+		lines = m.renderBodyTab(msg)
 	case 1:
 		lines = m.renderHeadersTab(msg, innerWidth)
 	case 2:
-		lines = m.renderBodyTab(msg)
+		lines = m.renderMetadataTab(msg)
 	case 3:
 		lines = renderDLXTab(msg)
 	}
@@ -1268,7 +1268,7 @@ func (m model) tabCount() int {
 }
 
 func (m model) renderDetailTabBar() string {
-	tabs := []string{"Metadata", "Headers", "Body"}
+	tabs := []string{"Body", "Headers", "Metadata"}
 	if m.tabCount() == 4 {
 		tabs = append(tabs, "Dead Letter")
 	}
@@ -1409,7 +1409,7 @@ func (m model) renderHelpOverlay() string {
 		{
 			name: "Actions",
 			keys: []struct{ key, desc string }{
-				{"y", "Copy active tab content (routing key / headers / body)"},
+				{"y", "Copy active tab content (body / headers / routing key)"},
 				{"Y", "Copy full message to clipboard"},
 				{"e", "Export all messages to JSON"},
 				{"E", "Export all messages to CSV"},

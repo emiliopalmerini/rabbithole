@@ -33,7 +33,7 @@ func main() {
 func parseFlags() tui.Config {
 	cfg := tui.Config{}
 
-	flag.StringVar(&cfg.RabbitMQURL, "url", "amqp://guest:guest@localhost:5672/", "RabbitMQ connection URL")
+	flag.StringVar(&cfg.RabbitMQURL, "url", "", "RabbitMQ connection URL (env: AMQP_URL, RABBITMQ_URL)")
 	flag.StringVar(&cfg.Exchange, "exchange", "", "Exchange to bind to")
 	flag.StringVar(&cfg.RoutingKey, "routing-key", "#", "Routing key pattern")
 	flag.StringVar(&cfg.QueueName, "queue", "", "Queue name (empty for exclusive auto-delete queue)")
@@ -47,6 +47,17 @@ func parseFlags() tui.Config {
 	if cfg.ShowVersion {
 		fmt.Printf("rabbithole %s\n", version)
 		os.Exit(0)
+	}
+
+	// Resolve AMQP URL: CLI flag > env var > default
+	if cfg.RabbitMQURL == "" {
+		if u := os.Getenv("AMQP_URL"); u != "" {
+			cfg.RabbitMQURL = u
+		} else if u := os.Getenv("RABBITMQ_URL"); u != "" {
+			cfg.RabbitMQURL = u
+		} else {
+			cfg.RabbitMQURL = "amqp://guest:guest@localhost:5672/"
+		}
 	}
 
 	return cfg

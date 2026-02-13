@@ -287,4 +287,32 @@ func TestStore_SearchMessages(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 result for 'shipped', got %d", len(results))
 	}
+
+	// FTS5 special characters should not cause errors
+	for _, q := range []string{`"quoted"`, `OR AND NOT`, `(parens)`, `*wildcard`, `col:prefix`} {
+		_, err := store.SearchMessages(ctx, q, 10, 0)
+		if err != nil {
+			t.Errorf("SearchMessages(%q) unexpected error: %v", q, err)
+		}
+	}
+}
+
+func TestSanitizeFTS5Query(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "simple", want: `"simple"`},
+		{input: `has "quotes"`, want: `"has ""quotes"""`},
+		{input: "OR AND NOT", want: `"OR AND NOT"`},
+		{input: "(parens)", want: `"(parens)"`},
+		{input: "", want: `""`},
+	}
+
+	for _, tt := range tests {
+		got := sanitizeFTS5Query(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizeFTS5Query(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
 }

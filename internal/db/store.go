@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -207,7 +208,7 @@ WHERE messages_fts MATCH ?
 ORDER BY m.consumed_at DESC
 LIMIT ? OFFSET ?
 `
-	return s.scanMessages(ctx, searchQuery, query, limit, offset)
+	return s.scanMessages(ctx, searchQuery, sanitizeFTS5Query(query), limit, offset)
 }
 
 func (s *SQLiteStore) SearchMessagesInSession(ctx context.Context, query string, sessionID, limit, offset int64) ([]Message, error) {
@@ -221,7 +222,14 @@ WHERE messages_fts MATCH ? AND m.session_id = ?
 ORDER BY m.consumed_at DESC
 LIMIT ? OFFSET ?
 `
-	return s.scanMessages(ctx, searchQuery, query, sessionID, limit, offset)
+	return s.scanMessages(ctx, searchQuery, sanitizeFTS5Query(query), sessionID, limit, offset)
+}
+
+// sanitizeFTS5Query wraps user input in double quotes for literal phrase
+// matching, escaping any internal double quotes to prevent FTS5 syntax errors.
+func sanitizeFTS5Query(query string) string {
+	escaped := strings.ReplaceAll(query, `"`, `""`)
+	return `"` + escaped + `"`
 }
 
 func (s *SQLiteStore) scanMessages(ctx context.Context, query string, args ...any) (_ []Message, err error) {

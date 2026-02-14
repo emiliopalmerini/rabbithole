@@ -146,4 +146,8 @@ var (
 	// Dead-letter indicator
 	dlxStyle = lipgloss.NewStyle().
 			Foreground(redColor)
+
+	// Status bar middle-dot separator (right group)
+	statusSepStyle = lipgloss.NewStyle().
+			Foreground(greyColor)
 )

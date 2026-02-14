@@ -987,28 +987,69 @@ func (m model) View() string {
 }
 
 func (m model) renderStatusBar() string {
-	var connStatus string
+	sep := statusSepStyle.Render("  ‖  ")
+	rsep := statusSepStyle.Render("  ·  ")
+
+	// --- Left group: connection state + transient/contextual indicators ---
+	var left []string
+
+	// Connection state
 	if m.replayMode {
-		connStatus = connectedStyle.Render("▶ Replay")
+		left = append(left, connectedStyle.Render("▶ Replay"))
 	} else {
 		switch m.connState {
 		case stateConnected:
-			connStatus = connectedStyle.Render("● Connected")
+			left = append(left, connectedStyle.Render("● Connected"))
 		case stateConnecting:
-			connStatus = statusBarStyle.Render(m.spinner.View() + " Connecting...")
+			left = append(left, statusBarStyle.Render(m.spinner.View()+" Connecting..."))
 		default:
 			errMsg := ""
 			if m.connError != nil {
 				errMsg = fmt.Sprintf(" (%s)", m.connError.Error())
 			}
-			connStatus = disconnectedStyle.Render("○ Disconnected" + errMsg)
+			left = append(left, disconnectedStyle.Render("○ Disconnected"+errMsg))
 		}
 	}
 
-	exchange := statusBarStyle.Render(fmt.Sprintf("Exchange: %s", m.config.Exchange))
-	routingKey := statusBarStyle.Render(fmt.Sprintf("Routing: %s", m.config.RoutingKey))
+	// Paused indicator (only when paused)
+	if m.paused {
+		pause := disconnectedStyle.Render("PAUSED")
+		if m.newMsgCount > 0 {
+			pause += " " + newMsgStyle.Render(fmt.Sprintf("+%d new", m.newMsgCount))
+		}
+		left = append(left, pause)
+	}
 
-	// Count historical vs live messages
+	// Filter indicator (only when a filter expression exists)
+	if m.filterActive && m.filterExpr != "" {
+		left = append(left, disconnectedStyle.Render(fmt.Sprintf("FILTER: %s (%d)", m.filterExpr, len(m.filteredIdx))))
+	} else if m.filterExpr != "" {
+		left = append(left, mutedStyle.Render(fmt.Sprintf("filter off: %s", m.filterExpr)))
+	}
+
+	// Search results indicator (only during active search)
+	if m.searchQuery != "" {
+		if len(m.searchResults) > 0 {
+			left = append(left, statusBarStyle.Render(fmt.Sprintf("%d/%d", m.searchResultIdx+1, len(m.searchResults))))
+		} else {
+			left = append(left, mutedStyle.Render("no matches"))
+		}
+	}
+
+	// Status message (brief confirmation like "Copied!")
+	if m.statusMsg != "" && time.Since(m.statusMsgTime) < 3*time.Second {
+		left = append(left, confirmationStyle.Render(m.statusMsg))
+	}
+
+	leftStr := strings.Join(left, sep)
+
+	// --- Right group: binding metadata + stats ---
+	var right []string
+
+	right = append(right, statusBarStyle.Render(m.config.Exchange))
+	right = append(right, statusBarStyle.Render(m.config.RoutingKey))
+
+	// Message count
 	historicalCount := 0
 	for _, msg := range m.messages {
 		if msg.Historical {
@@ -1016,72 +1057,38 @@ func (m model) renderStatusBar() string {
 		}
 	}
 	liveCount := len(m.messages) - historicalCount
-
-	var msgCount string
 	if historicalCount > 0 {
-		msgCount = statusBarStyle.Render(fmt.Sprintf("Messages: %dH+%dL", historicalCount, liveCount))
+		right = append(right, statusBarStyle.Render(fmt.Sprintf("%dH+%dL msgs", historicalCount, liveCount)))
 	} else {
-		msgCount = statusBarStyle.Render(fmt.Sprintf("Messages: %d", len(m.messages)))
-	}
-
-	pausedStatus := ""
-	if m.paused {
-		pausedStatus = disconnectedStyle.Render(" [PAUSED]")
-		if m.newMsgCount > 0 {
-			pausedStatus += " " + newMsgStyle.Render(fmt.Sprintf("+%d new", m.newMsgCount))
-		}
-	}
-
-	// Search results indicator
-	searchStatus := ""
-	if m.searchQuery != "" {
-		if len(m.searchResults) > 0 {
-			searchStatus = statusBarStyle.Render(fmt.Sprintf(" [%d/%d]", m.searchResultIdx+1, len(m.searchResults)))
-		} else {
-			searchStatus = mutedStyle.Render(" (no matches)")
-		}
-	}
-
-	// Filter indicator
-	filterStatus := ""
-	if m.filterActive && m.filterExpr != "" {
-		filterStatus = disconnectedStyle.Render(fmt.Sprintf(" [FILTER: %s (%d)]", m.filterExpr, len(m.filteredIdx)))
-	} else if m.filterExpr != "" {
-		filterStatus = mutedStyle.Render(fmt.Sprintf(" [filter off: %s]", m.filterExpr))
-	}
-
-	// Status message (brief confirmation)
-	statusMsgDisplay := ""
-	if m.statusMsg != "" && time.Since(m.statusMsgTime) < 3*time.Second {
-		statusMsgDisplay = "  " + confirmationStyle.Render(m.statusMsg)
+		right = append(right, statusBarStyle.Render(fmt.Sprintf("%d msgs", len(m.messages))))
 	}
 
 	// Live stats (only when connected and have messages)
-	statsDisplay := ""
 	if m.stats.totalMessages > 0 && !m.replayMode {
 		rate := m.stats.msgPerSec(time.Now())
 		avg := m.stats.avgSize()
-		statsDisplay = mutedStyle.Render(fmt.Sprintf("%s  avg %s", formatRate(rate), formatBytes(avg)))
+		right = append(right, mutedStyle.Render(fmt.Sprintf("%s  avg %s", formatRate(rate), formatBytes(avg))))
 	}
 
-	parts := []string{
-		connStatus,
-		pausedStatus,
-		filterStatus,
-		searchStatus,
-		statusMsgDisplay,
-		"  │  ",
-		exchange,
-		"  │  ",
-		routingKey,
-		"  │  ",
-		msgCount,
-	}
-	if statsDisplay != "" {
-		parts = append(parts, "  │  ", statsDisplay)
+	rightStr := strings.Join(right, rsep)
+
+	// Fill the gap between left and right with spaces
+	leftWidth := lipgloss.Width(leftStr)
+	rightWidth := lipgloss.Width(rightStr)
+	gap := m.width - leftWidth - rightWidth
+	if gap < 2 {
+		// Terminal too narrow — truncate right side
+		avail := m.width - leftWidth - 2
+		if avail > 0 {
+			rightStr = truncate(rightStr, avail)
+			gap = m.width - leftWidth - lipgloss.Width(rightStr)
+		} else {
+			// Only show left side
+			return leftStr
+		}
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
+	return leftStr + strings.Repeat(" ", gap) + rightStr
 }
 
 func (m model) renderMessageList(width, height int) string {
@@ -1355,18 +1362,11 @@ func (m model) renderFilterBar() string {
 func (m model) renderHelpBar() string {
 	keys := []struct{ key, desc string }{
 		{"j/k", "nav"},
-		{"gg/G", "top/end"},
 		{"/", "search"},
-		{"f/F", "filter"},
-		{"y/Y", "copy"},
-		{"e/E", "export"},
-		{"m", "mark"},
+		{"f", "filter"},
+		{"y", "copy"},
 		{"tab", "section"},
-		{"r", "raw"},
-		{"p", "pause"},
 		{"?", "help"},
-		{"b", "back"},
-		{"q", "quit"},
 	}
 
 	var parts []string
@@ -1374,7 +1374,7 @@ func (m model) renderHelpBar() string {
 		parts = append(parts, helpKeyStyle.Render(k.key)+" "+k.desc)
 	}
 
-	return helpStyle.Render(strings.Join(parts, " │ "))
+	return helpStyle.Render(strings.Join(parts, "  "))
 }
 
 func (m model) renderHelpOverlay() string {

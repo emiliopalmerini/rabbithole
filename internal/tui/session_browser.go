@@ -582,5 +582,5 @@ func (m sessionBrowserModel) renderHelp() string {
 		parts = append(parts, fmt.Sprintf("%s %s", helpKeyStyle.Render(k.key), k.desc))
 	}
 
-	return helpStyle.Render(strings.Join(parts, "  │  "))
+	return helpStyle.Render(strings.Join(parts, "  "))
 }

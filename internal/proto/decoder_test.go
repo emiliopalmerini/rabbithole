@@ -49,4 +49,3 @@ func TestRoutingKeyToTypeHint(t *testing.T) {
 		})
 	}
 }
-

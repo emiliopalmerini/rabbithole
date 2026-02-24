@@ -280,4 +280,3 @@ func convertSingularValue(fd protoreflect.FieldDescriptor, v protoreflect.Value)
 		return v.Interface()
 	}
 }
-

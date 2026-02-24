@@ -1,4 +1,6 @@
 # rabbithole
+<img width="1408" height="768" alt="Gemini_Generated_Image_s2b1kus2b1kus2b1" src="https://github.com/user-attachments/assets/f6b6dcb4-8a87-41bb-97fa-2a67cad5fd41" />
+
 
 A beautiful TUI for consuming and inspecting RabbitMQ messages with Protobuf decoding.
 

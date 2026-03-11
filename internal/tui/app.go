@@ -30,6 +30,9 @@ type appModel struct {
 	profilePicker  profilePickerModel
 	urlPrompt      urlPromptModel
 
+	// Last known window size
+	width, height int
+
 	// Track queues created across views for deletion
 	createdQueues map[string]bool
 }
@@ -114,11 +117,17 @@ func (m appModel) Init() tea.Cmd {
 
 func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
 	case profileSelectedMsg:
 		cfg := resolveConfig(m.fileCfg, m.configDir, msg.name, "")
 		m.config = cfg
 		m.view = appViewBrowser
 		m.browser = newBrowserModel(cfg)
+		m.browser.width = m.width
+		m.browser.height = m.height
 		return m, m.browser.Init()
 
 	case urlEnteredMsg:
@@ -126,6 +135,8 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.config = cfg
 		m.view = appViewBrowser
 		m.browser = newBrowserModel(cfg)
+		m.browser.width = m.width
+		m.browser.height = m.height
 		return m, m.browser.Init()
 
 	case startConsumingMsg:

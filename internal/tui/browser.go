@@ -132,12 +132,12 @@ func (m browserModel) loadTopology() tea.Cmd {
 		}
 
 		ctx := context.Background()
-		exchanges, err := mgmt.GetExchanges(ctx, "/")
+		exchanges, err := mgmt.GetExchanges(ctx, mgmt.VHost())
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to load exchanges: %w", err)}
 		}
 
-		queues, err := mgmt.GetQueues(ctx, "/")
+		queues, err := mgmt.GetQueues(ctx, mgmt.VHost())
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to load queues: %w", err)}
 		}
@@ -153,7 +153,7 @@ func (m browserModel) loadBindings(exchange string) tea.Cmd {
 			return errorMsg{err: fmt.Errorf("management client not initialized")}
 		}
 
-		bindings, err := mgmt.GetBindings(context.Background(), "/", exchange)
+		bindings, err := mgmt.GetBindings(context.Background(), mgmt.VHost(), exchange)
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to load bindings: %w", err)}
 		}
@@ -169,7 +169,7 @@ func (m browserModel) deleteQueue(queueName string) tea.Cmd {
 			return errorMsg{err: fmt.Errorf("management client not initialized")}
 		}
 
-		err := mgmt.DeleteQueue(context.Background(), "/", queueName)
+		err := mgmt.DeleteQueue(context.Background(), mgmt.VHost(), queueName)
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to delete queue: %w", err)}
 		}

@@ -17,7 +17,13 @@ type ManagementClient struct {
 	baseURL  string
 	username string
 	password string
+	vhost    string
 	client   *http.Client
+}
+
+// VHost returns the virtual host extracted from the AMQP URL.
+func (c *ManagementClient) VHost() string {
+	return c.vhost
 }
 
 type Exchange struct {
@@ -80,10 +86,16 @@ func NewManagementClient(amqpURL string, managementURL string) (*ManagementClien
 		baseURL = fmt.Sprintf("%s://%s:15672/api", scheme, host)
 	}
 
+	vhost := "/"
+	if p := strings.TrimPrefix(parsed.Path, "/"); p != "" {
+		vhost = p
+	}
+
 	return &ManagementClient{
 		baseURL:  baseURL,
 		username: username,
 		password: password,
+		vhost:    vhost,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
